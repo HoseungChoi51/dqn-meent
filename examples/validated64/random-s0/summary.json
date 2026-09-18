@@ -1,0 +1,9 @@
+{
+  "method": "random",
+  "seed": 0,
+  "evaluation_requests": 4128,
+  "solver_calls": 4128,
+  "cache_hits": 0,
+  "best_efficiency": 0.5512333921413961,
+  "elapsed_seconds": 43.94486451099965
+}

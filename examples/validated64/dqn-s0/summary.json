@@ -1,0 +1,19 @@
+{
+  "steps": 4096,
+  "episodes_completed": 32,
+  "updates": 3585,
+  "best_efficiency": 0.655840482544702,
+  "last_efficiency": 0.07094667839779481,
+  "last_loss": 0.003685172414407134,
+  "evaluations": 4128,
+  "solver_calls": 2419,
+  "cache_hits": 1709,
+  "elapsed_seconds": 206.558377415,
+  "seed": 0,
+  "device": "cpu",
+  "double_dqn": true,
+  "resumed_from": null,
+  "checkpoint": "examples/validated64/dqn-s0/checkpoint.pt",
+  "best_design": "examples/validated64/dqn-s0/best_design.npy",
+  "metrics": "examples/validated64/dqn-s0/metrics.csv"
+}

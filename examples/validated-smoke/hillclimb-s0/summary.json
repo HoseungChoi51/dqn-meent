@@ -1,0 +1,9 @@
+{
+  "method": "hillclimb",
+  "seed": 0,
+  "evaluation_requests": 256,
+  "solver_calls": 151,
+  "cache_hits": 105,
+  "best_efficiency": 0.7218712880071815,
+  "elapsed_seconds": 0.11607734599965625
+}

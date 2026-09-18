@@ -1,0 +1,40 @@
+{
+  "physics": {
+    "n_cells": 16,
+    "wavelength_nm": 1100.0,
+    "deflection_angle_deg": 50.0,
+    "thickness_nm": 325.0,
+    "n_incident": 1.45,
+    "n_exit": 1.0,
+    "silicon_n": 3.551726470588235,
+    "silicon_k": 0.0,
+    "material": "constant",
+    "fourier_order": 5,
+    "cache_size": 50000,
+    "energy_tolerance": 1e-06
+  },
+  "training": {
+    "total_steps": 256,
+    "horizon": 32,
+    "seed": 0,
+    "learning_rate": 0.0001,
+    "gamma": 0.99,
+    "batch_size": 32,
+    "buffer_size": 1000,
+    "learning_starts": 32,
+    "train_frequency": 1,
+    "target_update_interval": 64,
+    "epsilon_start": 0.9,
+    "epsilon_end": 0.01,
+    "exploration_fraction": 0.8,
+    "hidden_sizes": [
+      128,
+      128
+    ],
+    "double_dqn": true,
+    "reward_mode": "paper",
+    "device": "cpu",
+    "checkpoint_interval": 128,
+    "torch_threads": 1
+  }
+}

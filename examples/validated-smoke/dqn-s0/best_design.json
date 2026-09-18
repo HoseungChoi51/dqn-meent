@@ -1,0 +1,37 @@
+{
+  "efficiency": 0.6212953998749268,
+  "step_at_save": 256,
+  "physics": {
+    "n_cells": 16,
+    "wavelength_nm": 1100.0,
+    "deflection_angle_deg": 50.0,
+    "thickness_nm": 325.0,
+    "n_incident": 1.45,
+    "n_exit": 1.0,
+    "silicon_n": 3.551726470588235,
+    "silicon_k": 0.0,
+    "material": "constant",
+    "fourier_order": 5,
+    "cache_size": 50000,
+    "energy_tolerance": 1e-06
+  },
+  "period_nm": 1435.9480182655066,
+  "design": [
+    1,
+    1,
+    0,
+    1,
+    0,
+    1,
+    0,
+    0,
+    1,
+    1,
+    0,
+    1,
+    1,
+    0,
+    1,
+    1
+  ]
+}
