@@ -44,9 +44,12 @@ export default function App() {
   useEffect(() => () => clearTimeout(toastTimer.current), []);
   function notify(message: string) { setToast(message); clearTimeout(toastTimer.current); toastTimer.current = setTimeout(() => setToast(''), 6000); }
   function navigate(value: string) { setView(value); location.hash = value; setSidebar(false); }
-  async function research(message: string, mode: string, hypothesisId?: string) {
-    if (!state.campaign) return; setChat(true);
-    try { await api('/api/research', { campaign_id: state.campaign.id, message, mode, hypothesis_id: hypothesisId }); await refresh(); notify('Research request recorded. Follow its progress in the conversation.'); } catch (e) { setError(errorText(e)); }
+  async function research(message: string, mode: string, hypothesisId?: string, feedbackReviewIds?: string[]): Promise<boolean> {
+    if (!state.campaign) return false; setChat(true);
+    try {
+      await api('/api/research', { campaign_id: state.campaign.id, message, mode, hypothesis_id: hypothesisId, feedback_review_ids: feedbackReviewIds });
+      await refresh(); notify('Research request recorded. Follow its progress in the conversation.'); return true;
+    } catch (e) { notify(`Research request failed: ${errorText(e)}`); return false; }
   }
   const actions: WorkspaceActions = { navigate, refresh, notify, research, campaign: edit => setModal({ type: 'campaign', edit }), hypothesis: parent => setModal({ type: 'hypothesis', parent }), launch: (hypothesis, taskId) => setModal({ type: 'trial', hypothesis, taskId }), trialAction: (trial, action) => setModal({ type: 'trialAction', trial, action }) };
   function done(message: string, result?: Json, newCampaign = false) { setModal(null); notify(message); if (newCampaign && result?.id) setCampaignId(result.id); else void refresh(); }

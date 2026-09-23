@@ -4,21 +4,29 @@ This map follows the eight sections of the [revised plan](agentic-algorithm-disc
 
 ## Newly planned extensions: 2026-09-23
 
-The latest feature request updates the plan only. The capabilities below are not established by the earlier implementation or its passing tests.
+The broader feature request initially updated the plan only. A subsequent live-testing request implements the individual idea feedback loop described below; the remaining extensions are still planned.
 
 | Requested extension | Existing foundation | Work still planned |
 |---|---|---|
-| Researcher assessment drives repeated idea generation | Hypothesis reviews, lineage, status controls, and research discussions | Structured batch dispositions and comments, explicit kill/revival scope, versioned feedback briefs, regeneration tied to feedback, and stale-decision dispatch checks |
+| Researcher assessment drives repeated idea generation | Saved comments, direct comment-driven revisions, frozen feedback context, linked descendants with change explanations, and visible agent critiques | Structured batch dispositions, broader kill/revival scope, workspace-wide feedback briefs, and stale-decision dispatch checks |
 | Learn from individual and comparative finalist evaluations | Numerical comparisons, validation artifacts, and research summaries | Method–problem assessments, measured problem-characteristic profiles, competing explanations and diagnostic proposals, discussion drafts, and reviewed promotion of conditional findings |
 | Reuse learned knowledge and repeated background sources | Campaign source records and source material supplied to research calls | Canonical source/version management, claim-level notes and findings, retrieval before search, contradiction/correction propagation, and linked-workspace collections with inherited confirmation exposure |
 
 Internet publication, automatic sharing, and community synchronization remain deferred. Current exposure controls are campaign-scoped; the plan's propagation across linked workspaces requires new implementation. The [plan's delivery increments](agentic-algorithm-discovery-plan.md#8-implementation-increments-and-acceptance-criteria) define acceptance checks for these additions.
 
+## Individual idea feedback update
+
+An idea now distinguishes saving a researcher comment, requesting an agent critique, and revising with saved feedback. Revision requests capture exact saved researcher comments and the selected parent in their context snapshot; every reasoning role receives that context. Generated descendants retain those links and fields for what changed and how feedback was addressed. Agent assessments appear on the original idea, while its scientific proposal remains intact. Targeted critique cannot create new hypotheses. Targeted critique and revision do not automatically launch numerical trials even in delegated mode.
+
+The implementation rejects feedback from another idea, cross-campaign targets, and revisions of archived ideas. Comments remain saved when model setup or a later request fails. This is a traceable individual revision loop; it does not establish that model revisions are scientifically better, or complete the broader batch-feedback and knowledge-library plan.
+
+Validation: the full Python suite passed **176 tests**, and an additional API/coordinator/engine integration test passed two consecutive feedback-driven revision rounds plus a critique-only request. All **14 mocked browser tests** and the production frontend build passed. These checks use fake model responses; this update makes no new claim about live model reasoning quality.
+
 ## Provider configuration update
 
 The current default is **Codex `gpt-6-sol` for all research roles**, with execution disabled pending researcher configuration. The provider adapter preserves structured research records and checkpoints, distinguishes subscription usage from paid API estimates, and does not fall back to `.key`. The dashboard labels deferred setup, subscription calls, and API budgets separately. No Codex subscription login or live model call was performed by this update; the historical API checks below describe the earlier explicit API configuration.
 
-The updated full Python suite passed **168 tests with no skips**. Nineteen fake-process transport tests and fifteen provider integration tests cover cancellation, bounded output/runtime, authentication rejection, deferred activation, model selection, accounting, and no paid fallback. The final transport compatibility changes also passed 43 focused transport/provider/API checks. Installed Codex 0.155.1 accepted the strict configuration in a network-disabled namespace with empty authentication. This verifies startup configuration; live GPT6-sol inference remains deliberately untested until researcher configuration. The production build and all seven mocked browser tests passed. The restarted local service reports `enabled=false`, `configured=false`, and `model=gpt-6-sol`, with the existing campaign preserved.
+The updated full Python suite passed **168 tests with no skips**. Nineteen fake-process transport tests and fifteen provider integration tests cover cancellation, bounded output/runtime, authentication rejection, deferred activation, model selection, accounting, and no paid fallback. The final transport compatibility changes also passed 43 focused transport/provider/API checks. Installed Codex 0.155.1 accepted the strict configuration in a network-disabled namespace with empty authentication. This verified startup configuration; live GPT6-sol inference was deliberately left for researcher configuration. The production build and all seven mocked browser tests passed. At that check, the restarted local service reported `enabled=false`, `configured=false`, and `model=gpt-6-sol`, with the existing campaign preserved.
 
 ## Verification recorded during implementation
 

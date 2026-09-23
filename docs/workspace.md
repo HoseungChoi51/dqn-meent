@@ -77,6 +77,21 @@ In **guided** mode, proposals wait in the decision inbox. **Delegated** mode can
 
 The material defaults use a fixed silicon index. When changing wavelength, set the intended index or choose `material: "meent_green"` for MEENT's dispersive complex material table. These are different physical conditions and are separated in comparisons. `fourier_order: F` retains `2F + 1` harmonics; this parameter is independent of the number of binary cells.
 
+## Give an idea feedback and request a revision
+
+Open an idea from **Hypotheses**, then use **Feedback and agent critiques**:
+
+- **Save comment** records your feedback on this idea. It makes no model call.
+- **Revise with my feedback** saves any text in **Your feedback**, then asks the agents to revise the selected idea using its saved researcher comments. The request captures those comments at that moment; later comments can guide another round. Your original idea remains available, and new revisions appear as linked descendants.
+- **Ask agents for critique** requests an assessment of assumptions, weaknesses, and useful checks. Agent critiques are saved on the idea and summarized in the research conversation. This action does not create a revised idea.
+- **Edit a copy myself** opens the manual idea editor with the selected idea as its parent.
+
+A revised idea shows **What changed**, the agents' response to your feedback, and the exact **Feedback used**. An explanation is a proposal for your assessment, not proof that the revision works. Open a descendant, add another comment, and repeat to continue the conversation about that idea.
+
+Revision and critique require a configured model. Comments can still be saved while setup is deferred or a discussion is running. If the comment is saved but the revision request fails, the comment remains available for retry. Revive archived ideas before revising them. Neither targeted critique nor targeted revision automatically launches numerical experiments, including in delegated mode; proposed experiments remain available for a separate decision.
+
+This implements an individual idea's feedback loop. Batch keep/reject decisions, broader kill/revival scopes, and the persistent knowledge library remain planned extensions.
+
 ## Experiments and controls
 
 The built-in methods are uniform random search, restart hill climbing, Double DQN, simulated annealing, adaptive block tabu search, population search, and a ridge-kernel surrogate method. The surrogate is a lightweight implementation; it is not an implementation or reproduction of BOCS. Fourier-informed search, relaxed gradients, and adaptive portfolios begin as dossiers until a runnable implementation is supplied.

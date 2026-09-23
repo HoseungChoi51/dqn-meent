@@ -77,6 +77,121 @@ def test_offline_idea_and_evolution_preserve_parent_without_fake_llm():
     assert "fill-factor" not in card["protocol"]
 
 
+def revision_context():
+    ctx = context()
+    notes = [
+        {"id": "review_budget", "author": "researcher", "text": "Reduce warm-up to 12 calls; the solver is expensive."},
+        {"id": "review_constraints", "author": "researcher", "text": "Keep a 50% fill factor — explain any conflict with the mechanism."},
+    ]
+    target = next(h for h in ctx["hypotheses"] if h["id"] == "seed_surrogate")
+    target["reviews"] = copy.deepcopy(notes)
+    ctx["revision_context"] = {"hypothesis_id": target["id"], "reviews": notes}
+    return ctx
+
+
+def revision_proposal():
+    return {
+        "title": "Budget-aware constrained surrogate", "algorithm": "surrogate",
+        "mechanism": "Fit after 12 samples and use fill-factor-preserving swaps.",
+        "rationale": "A cheaper startup may fit the available budget, pending ranking checks.",
+        "assumptions": ["12 points suffice for a useful ranking"], "predictions": ["More guided steps within the cap"],
+        "failure_modes": ["The reduced warm-up yields unreliable ranking"],
+        "cheapest_check": "Compare held-out ranking after 12 versus 32 samples.",
+        "parent_ids": ["seed_random", "invented_parent"],
+        "change_summary": "Reduced warm-up and replaced bit flips with fill-factor-preserving swaps.",
+        "feedback_response": "review_budget: use 12 calls, subject to a ranking check. review_constraints: swaps preserve 50% fill factor.",
+    }
+
+
+def test_targeted_revision_supplies_exact_feedback_to_every_role_and_preserves_lineage(monkeypatch):
+    configure(monkeypatch)
+    ctx = revision_context()
+    original = copy.deepcopy(ctx)
+    seen = []
+
+    def response(payload, count):
+        prompt = json.loads(payload["messages"][1]["content"])
+        seen.append(prompt)
+        assert "targeted revision of selected_hypothesis" in payload["messages"][0]["content"]
+        assert "researcher guidance" in payload["messages"][0]["content"]
+        return {"analysis": "Reduce startup while testing ranking quality.", "hypotheses": [revision_proposal()],
+                "next_roles": ["combinatorial_generator"] if count == 1 else []}
+
+    mock_provider(monkeypatch, response)
+    result = research.run_research({"mode": "evolve", "hypothesis_id": "seed_surrogate",
+                                   "feedback_review_ids": ["review_budget", "review_constraints"]}, ctx)
+    assert len(seen) == 5
+    assert any(r["role"] == "combinatorial_generator" for r in result["research_state"]["role_results"])
+    for prompt in seen:
+        assert prompt["selected_hypothesis"]["id"] == "seed_surrogate"
+        assert prompt["revision_context"] == original["revision_context"]
+        assert prompt["context"]["revision_context"] == original["revision_context"]
+    assert len(result["hypotheses"]) == len(seen)
+    for card in result["hypotheses"]:
+        assert card["parent_ids"] == ["seed_surrogate", "seed_random"]
+        assert card["revision_context"] == original["revision_context"]
+        assert card["change_summary"] == revision_proposal()["change_summary"]
+        assert card["feedback_response"] == revision_proposal()["feedback_response"]
+    assert ctx == original
+    result["hypotheses"][0]["revision_context"]["reviews"][0]["text"] = "Mutated output"
+    assert result["hypotheses"][1]["revision_context"] == original["revision_context"]
+    assert ctx == original
+
+
+def test_changed_feedback_invalidates_revision_checkpoint(monkeypatch):
+    configure(monkeypatch)
+    calls = mock_provider(monkeypatch, lambda *_: {"analysis": "Assess startup against the researcher's budget."})
+    ctx = revision_context()
+    request = {"mode": "evolve", "hypothesis_id": "seed_surrogate", "feedback_review_ids": ["review_budget"]}
+    checkpoint = None
+
+    def interrupt(event):
+        nonlocal checkpoint
+        if event["type"] == "research_checkpoint":
+            checkpoint = copy.deepcopy(event)
+            raise InterruptedError("Service restart")
+
+    with pytest.raises(InterruptedError):
+        research.run_research(request, ctx, interrupt)
+    assert len(calls) == 1
+    resume_request = {**request, "resume_state": checkpoint["state"], "resume_fingerprint": checkpoint["fingerprint"]}
+    changed = copy.deepcopy(ctx)
+    changed["revision_context"]["reviews"][0]["text"] = "Use 20 warm-up calls instead."
+    with pytest.raises(ValueError, match="does not match"):
+        research.run_research(resume_request, changed)
+    with pytest.raises(ValueError, match="does not match"):
+        research.run_research({**resume_request, "feedback_review_ids": ["review_constraints"]}, ctx)
+    assert len(calls) == 1
+    result = research.run_research(resume_request, ctx)
+    assert result["research_state"]["completed"][0] == "assumption_reviewer"
+    assert len(calls) == 4
+
+
+def test_review_is_critique_only_even_when_dynamic_roles_propose_ideas(monkeypatch):
+    configure(monkeypatch)
+
+    def response(payload, count):
+        prompt = json.loads(payload["messages"][1]["content"])
+        assert prompt["selected_hypothesis"]["id"] == "seed_surrogate"
+        assert "critique only" in payload["messages"][0]["content"]
+        return {"analysis": f"Critique {count}: ranking quality may not repay startup.",
+                "hypotheses": [revision_proposal()],
+                "next_roles": ["evolution_specialist"] if count == 1 else []}
+
+    mock_provider(monkeypatch, response)
+    result = research.run_research({"mode": "review", "hypothesis_id": "seed_surrogate"}, context())
+    assert result["hypotheses"] == []
+    assert len(result["research_state"]["role_results"]) == 3
+    assert all(r["hypotheses"] == [] for r in result["research_state"]["role_results"])
+    assert result["research_state"]["role_results"][0]["analysis"].startswith("Critique 1:")
+
+
+def test_offline_review_does_not_create_ideas():
+    result = research.run_research({"mode": "review", "hypothesis_id": "seed_surrogate", "message": "Reduce warm-up."}, context())
+    assert result["hypotheses"] == []
+    assert result["usage"]["calls"] == 0
+
+
 def test_probe_prefers_discriminating_case_over_easy_or_jointly_flat_hard_case():
     tasks = [{"id": x} for x in ("easy", "hopeless", "useful")]
     trials = []

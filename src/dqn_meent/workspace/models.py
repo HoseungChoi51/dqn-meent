@@ -115,6 +115,13 @@ class HypothesisInput(Model):
 class ReviewInput(Model):
     text: str = Field(min_length=1, max_length=20000)
 
+    @field_validator("text")
+    @classmethod
+    def nonempty_comment(cls, value):
+        if not value.strip():
+            raise ValueError("Write a comment before saving")
+        return value
+
 
 class DecisionInput(Model):
     choice: str = Field(min_length=1, max_length=200)
@@ -126,5 +133,6 @@ class ResearchInput(Model):
     message: str = Field(min_length=1, max_length=20000)
     mode: Literal["discuss", "generate", "review", "compare", "evolve", "probe", "plan"] = "discuss"
     hypothesis_id: str | None = None
+    feedback_review_ids: list[str] = Field(default_factory=list, max_length=100)
     max_calls: int = Field(default=6, ge=1, le=20)
     max_output_tokens: int = Field(default=2048, ge=256, le=8192)

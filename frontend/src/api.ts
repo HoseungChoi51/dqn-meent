@@ -12,6 +12,8 @@ export type Hypothesis = {
   risks: string[]; origin?: string; source?: string; executable?: boolean; sources: (string | Json)[]; parent_ids: string[]; algorithm: string;
   algorithm_config: Json; status: string; reviews: Json[]; created_at: string;
   predictions?: string[]; cheapest_test?: string; novelty?: string; startup_cost?: string;
+  change_summary?: string; feedback_response?: string;
+  revision_context?: { hypothesis_id: string; reviews: Json[] };
 };
 export type Decision = {
   id: string; title: string; context: string; options: (string | { id: string; label: string; description?: string })[];

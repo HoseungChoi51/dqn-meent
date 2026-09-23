@@ -39,12 +39,32 @@ class ResearchCoordinator:
     def start(self, request: ResearchInput, automatic=False):
         with self.workspace.lock:
             campaign = self.store.get(request.campaign_id, "campaign")
+            target = None
+            if request.hypothesis_id:
+                target = self.store.get(request.hypothesis_id, "hypothesis")
+                if target["campaign_id"] != request.campaign_id:
+                    raise ValueError("The selected idea must belong to this campaign")
+            if request.feedback_review_ids and (request.mode != "evolve" or target is None):
+                raise ValueError("Feedback comments require a revision of a selected idea")
+            selected_feedback = []
+            if target is not None and request.mode == "evolve":
+                if target.get("status") == "archived":
+                    raise ValueError("Revive this idea before requesting a revision")
+                notes = [note for note in target.get("reviews", []) if note.get("author") == "researcher"]
+                requested_ids = set(request.feedback_review_ids)
+                if requested_ids - {note["id"] for note in notes}:
+                    raise ValueError("Select saved researcher comments belonging to this idea")
+                selected_feedback = [note for note in notes if not requested_ids or note["id"] in requested_ids]
+                if not provider_status()["configured"]:
+                    raise ValueError("Configure and enable the research model to revise this idea. Saved comments remain available.")
             runs = self.store.list("research_run", request.campaign_id)
             if any(r["status"] in {"running", "stopping"} for r in runs):
                 raise ValueError("This campaign already has an active research discussion; let it finish or stop it first")
             spent = sum(api_spend(r.get("usage")) for r in runs)
             remaining = max(0, campaign["llm_budget_usd"] - spent)
             context = self.context(request.campaign_id)
+            if target is not None and request.mode == "evolve":
+                context["revision_context"] = {"hypothesis_id": target["id"], "reviews": selected_feedback}
             payload = request.model_dump()
             payload["llm_budget_usd"] = remaining
             payload["provider_snapshot"] = provider_status()
@@ -124,8 +144,10 @@ class ResearchCoordinator:
                 if campaign["version"] != run["charter_version"]:
                     result["stale_charter"] = True
                 for h in result.get("hypotheses", []):
-                    h.update(campaign_id=run["campaign_id"], charter_version=run["charter_version"], created_at=now())
+                    h.update(campaign_id=run["campaign_id"], charter_version=run["charter_version"],
+                             research_run_id=run_id, created_at=now())
                     self.store.put("hypothesis", h, "hypothesis.created")
+                self._save_critiques(run, result)
                 for message in result.get("messages", []):
                     self.store.put("message", {**message, "id": identifier("message"),
                         "campaign_id": run["campaign_id"], "created_at": now(), "research_run_id": run_id,
@@ -137,6 +159,7 @@ class ResearchCoordinator:
                                   research_run_id=run_id, created_at=now())
                     self.store.put("action", action)
                     eligible = (campaign["autonomy"] == "delegated" and not result.get("decisions")
+                        and not (request.get("hypothesis_id") and request.get("mode") in {"review", "evolve"})
                         and not result.get("stale_charter") and action["kind"] == "probe"
                         and not any(t["status"] in {"running", "queued", "pausing", "stopping"} for t in self.store.list("trial", run["campaign_id"])))
                     if eligible:
@@ -165,6 +188,30 @@ class ResearchCoordinator:
                 run = self.store.get(run_id, "research_run")
                 run.update(status="failed", error=f"Research workflow failed ({type(exc).__name__}); completed role evidence is retained.", finished_at=now())
                 self.store.put("research_run", run, "research.failed")
+
+    def _save_critiques(self, run, result):
+        """Attach actual agent assessments to the idea that was reviewed."""
+        request = run["request"]
+        target_id = request.get("hypothesis_id")
+        if not target_id or request.get("mode") not in {"review", "evolve"} or result.get("mode") != "llm":
+            return
+        target = self.store.get(target_id, "hypothesis")
+        reviews = target.setdefault("reviews", [])
+        existing = {review["id"] for review in reviews}
+        role_results = (result.get("research_state") or {}).get("role_results", [])
+        changed = False
+        for index, assessment in enumerate(role_results):
+            role = assessment.get("role")
+            text = assessment.get("analysis", "").strip()
+            review_id = f"{run['id']}_critique_{index}"
+            if role not in {"assumption_reviewer", "comparative_reviewer"} or not text or review_id in existing:
+                continue
+            reviews.append({"id": review_id, "author": "agent", "role": role.replace("_", " ").capitalize(),
+                            "text": text, "created_at": now(), "research_run_id": run["id"],
+                            "model": result.get("provider", {}).get("model"), "origin": "llm"})
+            changed = True
+        if changed:
+            self.store.put("hypothesis", target, "hypothesis.critiqued")
 
     def reconsider_finished(self):
         """One event-driven reconsideration per completed batch, bounded by delegation."""

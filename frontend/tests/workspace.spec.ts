@@ -7,7 +7,7 @@ const algorithms = [{ id: 'random', name: 'Uniform random', description: 'Refere
 const blank = { campaigns: [], campaign: null, tasks: [], algorithms, hypotheses: [], decisions: [], events: [], trials: [], messages: [], research_runs: [], settings: { llm_configured: false, model: 'gpt-6-sol', provider: { provider: 'codex', billing_mode: 'subscription', model: 'gpt-6-sol', enabled: false, configured: false } } };
 const base = { ...blank, campaigns: [campaign], campaign, tasks: [task], budget: { spent_seconds: 4, llm_spent_usd: .001 } };
 
-async function mockWorkspace(page: Page, initial: Record<string, any>) {
+async function mockWorkspace(page: Page, initial: Record<string, any>, failures: { research?: number; review?: number } = {}) {
   const state = structuredClone(initial);
   const writes: Array<{ url: string; method: string; body: any }> = [];
   await page.route('**/api/**', async route => {
@@ -15,6 +15,18 @@ async function mockWorkspace(page: Page, initial: Record<string, any>) {
     if (path === '/api/events') return route.fulfill({ status: 200, contentType: 'text/event-stream', body: 'retry: 60000\n\n' });
     if (req.method() !== 'GET') {
       const body = req.postDataJSON(); writes.push({ url: path, method: req.method(), body });
+      if (path.endsWith('/review')) {
+        if (failures.review) { failures.review -= 1; return route.fulfill({ status: 503, json: { detail: 'Could not persist feedback' } }); }
+        const h = state.hypotheses.find((h: any) => path.includes(h.id));
+        h.reviews.push({ id: `review-${h.reviews.length + 1}`, author: 'researcher', text: body.text, created_at: '2026-01-02T00:00:00Z' });
+        return route.fulfill({ json: h });
+      }
+      if (path === '/api/research') {
+        if (failures.research) { failures.research -= 1; return route.fulfill({ status: 503, json: { detail: 'Provider unavailable' } }); }
+        const run = { id: `research-${writes.length}`, status: 'running', request: body, created_at: '2026-01-02T00:00:00Z' };
+        state.research_runs.push(run);
+        return route.fulfill({ json: run });
+      }
       if (path === '/api/campaigns') { state.campaign = { ...campaign, ...body }; state.campaigns = [state.campaign]; state.tasks = body.tasks.map((t: any) => ({ ...t, id: 'task-new' })); }
       if (path.endsWith('/control')) { const trial = state.trials.find((t: any) => path.includes(t.id)); if (trial) trial.status = body.action === 'pause' ? 'paused' : body.action === 'resume' ? 'running' : 'stopped'; }
       if (path.endsWith('/resolve')) { const d = state.decisions.find((d: any) => path.includes(d.id)); if (d) Object.assign(d, { ...body, status: 'resolved' }); }
@@ -135,4 +147,126 @@ test('research notebook separates subscription calls from historical API estimat
   await expect(subscription.getByText('Uses subscription allowance', { exact: true })).toBeVisible();
   await expect(subscription.locator('.meta-row')).not.toContainText('$');
   await expect(page.getByText('$0.0250 estimated API cost', { exact: true })).toBeVisible();
+});
+
+const feedbackIdea = {
+  id: 'hypothesis-feedback', title: 'Adaptive block hill climbing', mechanism: 'Mutate adjacent cells and restart after stagnation.',
+  rationale: 'Use local structure to improve proposal efficiency.', assumptions: [], risks: [], sources: [], parent_ids: [],
+  algorithm: 'hillclimb', algorithm_config: {}, status: 'proposed', origin: 'researcher', created_at: '2026-01-01T00:00:00Z',
+  reviews: [{ id: 'review-original', author: 'researcher', text: 'Preserve block mutations.', created_at: '2026-01-01T00:00:00Z' }],
+};
+const configuredFeedback = {
+  ...base, hypotheses: [feedbackIdea],
+  settings: { llm_configured: true, model: 'gpt-6-sol', provider: { provider: 'codex', billing_mode: 'subscription', model: 'gpt-6-sol', enabled: true, configured: true } },
+};
+
+async function openFeedbackIdea(page: Page) {
+  await page.goto('/#hypotheses');
+  await page.getByRole('button', { name: /H01.*Adaptive block hill climbing/ }).click();
+  return page.getByRole('dialog');
+}
+
+test('saving feedback records a comment without requesting a critique or revision', async ({ page }) => {
+  const { writes } = await mockWorkspace(page, configuredFeedback);
+  const dialog = await openFeedbackIdea(page);
+  await dialog.getByLabel('Your feedback', { exact: true }).fill('Replace the fixed restart schedule with a stagnation rule.');
+  await dialog.getByRole('button', { name: 'Save comment', exact: true }).click();
+  await expect(dialog.getByText('Comment saved. Agents have not been asked to revise the idea.')).toBeVisible();
+  await expect(dialog.getByLabel('Your feedback', { exact: true })).toHaveValue('');
+  await expect(dialog.getByText('Replace the fixed restart schedule with a stagnation rule.', { exact: true })).toBeVisible();
+  expect(writes.map(w => w.url)).toEqual(['/api/hypotheses/hypothesis-feedback/review']);
+});
+
+test('revision saves the draft then targets its idea and all saved researcher feedback', async ({ page }) => {
+  const { writes, state } = await mockWorkspace(page, configuredFeedback);
+  const dialog = await openFeedbackIdea(page);
+  await dialog.getByLabel('Your feedback', { exact: true }).fill('Trigger restart when progress stalls.');
+  await dialog.getByRole('button', { name: 'Revise with my feedback', exact: true }).click();
+  await expect(dialog.getByText(/Agents are working/)).toBeVisible();
+  await expect(dialog.getByRole('button', { name: 'Revise with my feedback', exact: true })).toBeDisabled();
+  await expect(dialog.getByRole('button', { name: 'Ask agents for critique', exact: true })).toBeDisabled();
+  expect(writes.map(w => w.url)).toEqual(['/api/hypotheses/hypothesis-feedback/review', '/api/research']);
+  expect(writes[1].body).toMatchObject({ campaign_id: campaign.id, hypothesis_id: feedbackIdea.id, mode: 'evolve', feedback_review_ids: ['review-original', 'review-2'] });
+  expect(state.hypotheses[0].title).toBe(feedbackIdea.title);
+  expect(state.trials).toEqual([]);
+
+  const child = { ...feedbackIdea, id: 'hypothesis-child', title: 'Stagnation-triggered block search', parent_ids: [feedbackIdea.id], reviews: [], change_summary: 'Restarts now follow a stall detector.', feedback_response: 'Kept block moves and replaced the fixed restart schedule.', revision_context: { hypothesis_id: feedbackIdea.id, reviews: structuredClone(state.hypotheses[0].reviews) } };
+  state.hypotheses.push(child);
+  Object.assign(state.research_runs[0], { status: 'completed', result: { hypotheses: [child] } });
+  await page.reload();
+  await page.getByRole('button', { name: /H01.*Adaptive block hill climbing/ }).click();
+  await dialog.getByRole('button', { name: 'Open revision: Stagnation-triggered block search' }).click();
+  await expect(dialog.getByRole('heading', { name: 'Stagnation-triggered block search', exact: true })).toBeVisible();
+  await expect(dialog.getByText('Restarts now follow a stall detector.')).toBeVisible();
+  await expect(dialog.getByText('Kept block moves and replaced the fixed restart schedule.')).toBeVisible();
+  await dialog.getByText('Feedback used for this revision', { exact: true }).click();
+  await expect(dialog.getByText('Trigger restart when progress stalls.', { exact: true })).toBeVisible();
+  await expect(dialog.getByLabel('Your feedback', { exact: true })).toHaveValue('');
+});
+
+test('disabled provider keeps comments available and explains why agent actions are disabled', async ({ page }) => {
+  const { writes } = await mockWorkspace(page, { ...base, hypotheses: [feedbackIdea] });
+  const dialog = await openFeedbackIdea(page);
+  await dialog.getByLabel('Your feedback', { exact: true }).fill('Use a smaller initial block size.');
+  await expect(dialog.getByRole('button', { name: 'Revise with my feedback', exact: true })).toBeDisabled();
+  await expect(dialog.getByRole('button', { name: 'Ask agents for critique', exact: true })).toBeDisabled();
+  await expect(dialog.getByText(/Configure and enable the research provider/)).toBeVisible();
+  await dialog.getByRole('button', { name: 'Save comment', exact: true }).click();
+  await expect(dialog.getByText('Use a smaller initial block size.', { exact: true })).toBeVisible();
+  expect(writes).toHaveLength(1);
+  expect(writes[0].url).toContain('/review');
+});
+
+test('failed revision submission retains saved feedback and retry does not save it twice', async ({ page }) => {
+  const { writes, state } = await mockWorkspace(page, configuredFeedback, { research: 1 });
+  const dialog = await openFeedbackIdea(page);
+  await dialog.getByLabel('Your feedback', { exact: true }).fill('Explain the restart threshold choice.');
+  await dialog.getByRole('button', { name: 'Revise with my feedback', exact: true }).click();
+  await expect(dialog.getByRole('alert')).toContainText('Your feedback is saved, but the revision request could not start.');
+  await expect(dialog.getByLabel('Your feedback', { exact: true })).toHaveValue('');
+  await expect(dialog.getByText('Explain the restart threshold choice.', { exact: true })).toBeVisible();
+  await dialog.getByRole('button', { name: 'Revise with my feedback', exact: true }).click();
+  await expect(dialog.getByText(/Agents are working/)).toBeVisible();
+  expect(writes.filter(w => w.url.endsWith('/review'))).toHaveLength(1);
+  expect(writes.filter(w => w.url === '/api/research').map(w => w.body.feedback_review_ids)).toEqual([['review-original', 'review-2'], ['review-original', 'review-2']]);
+  expect(state.hypotheses[0].reviews).toHaveLength(2);
+});
+
+test('a failed feedback save preserves the draft and never starts a revision', async ({ page }) => {
+  const { writes } = await mockWorkspace(page, configuredFeedback, { review: 1 });
+  const dialog = await openFeedbackIdea(page);
+  await dialog.getByLabel('Your feedback', { exact: true }).fill('Preserve the original mutation distribution.');
+  await dialog.getByRole('button', { name: 'Revise with my feedback', exact: true }).click();
+  await expect(dialog.getByRole('alert')).toContainText('No revision was requested.');
+  await expect(dialog.getByLabel('Your feedback', { exact: true })).toHaveValue('Preserve the original mutation distribution.');
+  expect(writes.map(w => w.url)).toEqual(['/api/hypotheses/hypothesis-feedback/review']);
+});
+
+test('critique assesses saved feedback without saving a draft or requesting a child', async ({ page }) => {
+  const { writes, state } = await mockWorkspace(page, configuredFeedback);
+  const dialog = await openFeedbackIdea(page);
+  await dialog.getByLabel('Your feedback', { exact: true }).fill('This is still a draft.');
+  await dialog.getByRole('button', { name: 'Ask agents for critique', exact: true }).click();
+  await expect(dialog.getByText(/Agents are working/)).toBeVisible();
+  await expect(dialog.getByLabel('Your feedback', { exact: true })).toHaveValue('This is still a draft.');
+  expect(writes).toHaveLength(1);
+  expect(writes[0].body).toMatchObject({ mode: 'review', hypothesis_id: feedbackIdea.id });
+  expect(writes[0].body.feedback_review_ids).toBeUndefined();
+  expect(state.hypotheses).toHaveLength(1);
+  state.hypotheses[0].reviews.push({ id: 'review-agent', author: 'agent', role: 'skeptical_reviewer', text: 'The stall threshold may depend on problem size.', created_at: '2026-01-02T00:00:00Z' });
+  Object.assign(state.research_runs[0], { status: 'completed', result: { hypotheses: [] } });
+  await page.reload();
+  await page.getByRole('button', { name: /H01.*Adaptive block hill climbing/ }).click();
+  await expect(dialog.getByText('The stall threshold may depend on problem size.')).toBeVisible();
+  await expect(dialog.getByText('Critique completed. Read the agent assessments above.')).toBeVisible();
+});
+
+test('archived ideas and unsuccessful agent runs expose actionable reasons', async ({ page }) => {
+  await mockWorkspace(page, { ...configuredFeedback, hypotheses: [{ ...feedbackIdea, status: 'archived' }], research_runs: [{ id: 'failed-revision', status: 'failed', request: { mode: 'evolve', hypothesis_id: feedbackIdea.id }, error: 'Model returned no valid revision.', created_at: '2026-01-02T00:00:00Z' }] });
+  const dialog = await openFeedbackIdea(page);
+  await expect(dialog.getByRole('button', { name: 'Revise with my feedback', exact: true })).toBeDisabled();
+  await expect(dialog.getByText('Revive this idea before requesting a revision.')).toBeVisible();
+  await expect(dialog.getByRole('alert')).toContainText('Model returned no valid revision.');
+  await expect(dialog.getByText(/This request has not produced a linked revision/)).toBeVisible();
+  await expect(dialog.getByRole('button', { name: 'Ask agents for critique', exact: true })).toBeEnabled();
 });

@@ -125,6 +125,103 @@ def test_lineage_and_researcher_reviews_preserve_parent_and_source_provenance(cl
     assert rejected.status_code == 409
 
 
+def test_saved_feedback_is_not_a_model_call_and_revision_captures_exact_notes(client, monkeypatch):
+    charter, _ = create_campaign(client)
+    parent = hypothesis(client, charter)
+    coordinator = client.app.state.coordinator
+    store = client.app.state.workspace.store
+    monkeypatch.setattr(coordinator, "_thread", lambda record: None)
+    monkeypatch.setattr("dqn_meent.workspace.coordinator.provider_status", lambda: {"configured": True})
+    saved = client.post(f"/api/hypotheses/{parent['id']}/review", json={"text": "Keep block moves, but remove the surrogate startup cost."})
+    note = saved.json()["reviews"][-1]
+    assert note["author"] == "researcher"
+    assert store.list("research_run", charter["id"]) == []
+    assert client.post(f"/api/hypotheses/{parent['id']}/review", json={"text": "  \n "}).status_code == 422
+    submitted = client.post("/api/research", json={"campaign_id": charter["id"], "mode": "evolve",
+        "hypothesis_id": parent["id"], "feedback_review_ids": [note["id"]], "message": "Revise using my feedback."})
+    assert submitted.status_code == 202, submitted.text
+    run = store.get(submitted.json()["id"], "research_run")
+    assert run["context_snapshot"]["revision_context"] == {"hypothesis_id": parent["id"], "reviews": [note]}
+    client.post(f"/api/hypotheses/{parent['id']}/review", json={"text": "Use this later comment in the next round."})
+    frozen = store.get(run["id"], "research_run")["context_snapshot"]
+    assert frozen["revision_context"]["reviews"] == [note]
+    assert len(next(h for h in frozen["hypotheses"] if h["id"] == parent["id"])["reviews"]) == 1
+    assert store.list("trial", charter["id"]) == []
+
+
+def test_revision_rejects_foreign_feedback_archived_ideas_and_disabled_model(client, monkeypatch):
+    charter, _ = create_campaign(client)
+    parent = hypothesis(client, charter)
+    other = hypothesis(client, charter, title="A separate idea")
+    note = client.post(f"/api/hypotheses/{parent['id']}/review", json={"text": "Prefer simpler proposals."}).json()["reviews"][-1]
+    payload = {"campaign_id": charter["id"], "mode": "evolve", "hypothesis_id": parent["id"],
+               "feedback_review_ids": [note["id"]], "message": "Revise this idea."}
+    response = client.post("/api/research", json=payload)
+    assert response.status_code == 409
+    assert "Saved comments remain" in response.json()["detail"]
+    monkeypatch.setattr("dqn_meent.workspace.coordinator.provider_status", lambda: {"configured": True})
+    assert client.post("/api/research", json={**payload, "hypothesis_id": other["id"]}).status_code == 409
+    assert client.post("/api/research", json={**payload, "feedback_review_ids": ["invented-review"]}).status_code == 409
+    assert client.post("/api/research", json={**payload, "mode": "review"}).status_code == 409
+    assert client.post("/api/research", json={**payload, "hypothesis_id": None}).status_code == 409
+    second_campaign, _ = create_campaign(client, name="Unrelated workspace")
+    assert client.post("/api/research", json={**payload, "campaign_id": second_campaign["id"]}).status_code == 409
+    client.post(f"/api/hypotheses/{parent['id']}/status", json={"status": "archived"})
+    response = client.post("/api/research", json=payload)
+    assert response.status_code == 409 and "Revive" in response.json()["detail"]
+    store = client.app.state.workspace.store
+    assert store.get(parent["id"], "hypothesis")["reviews"] == [note]
+    assert store.list("research_run", charter["id"]) == []
+
+
+@pytest.mark.parametrize("mode", ["review", "evolve"])
+def test_targeted_agent_work_saves_critiques_and_never_launches_delegated_trials(client, monkeypatch, mode):
+    charter, tasks = create_campaign(client)
+    client.put(f"/api/campaigns/{charter['id']}", json={"autonomy": "delegated"})
+    parent = hypothesis(client, charter)
+    note = client.post(f"/api/hypotheses/{parent['id']}/review", json={"text": "Explain how locality affects this method."}).json()["reviews"][-1]
+    coordinator = client.app.state.coordinator
+    store = client.app.state.workspace.store
+    monkeypatch.setattr(coordinator, "_thread", lambda record: None)
+    monkeypatch.setattr("dqn_meent.workspace.coordinator.provider_status", lambda: {"configured": True})
+    submitted = client.post("/api/research", json={"campaign_id": charter["id"], "mode": mode,
+        "hypothesis_id": parent["id"], "message": "Assess this idea and address my comments."})
+    assert submitted.status_code == 202, submitted.text
+    run_id = submitted.json()["id"]
+    snapshot = store.get(run_id, "research_run")["context_snapshot"]
+    children = []
+    if mode == "evolve":
+        assert snapshot["revision_context"]["reviews"] == [note]
+        children = [{"id": identifier("hypothesis"), "title": "A revised mechanism", "parent_ids": [parent["id"]],
+                     "revision_context": snapshot["revision_context"], "change_summary": "Adds a locality diagnostic.",
+                     "feedback_response": "The diagnostic tests your locality concern before restricting moves.",
+                     "status": "proposed", "reviews": []}]
+    result = {"status": "completed", "mode": "llm", "hypotheses": children, "messages": [], "decisions": [],
+              "provider": {"model": "gpt-6-sol"}, "usage": {"calls": 2, "billing_mode": "subscription"},
+              "research_state": {"role_results": [{"role": "assumption_reviewer", "analysis": "Locality needs evidence; compare against arbitrary moves."}]},
+              "actions": [{"id": identifier("action"), "kind": "probe", "title": "A suggested locality check",
+                           "rationale": "Distinguish locality from general coordinated moves.", "task_id": tasks[0]["id"],
+                           "hypothesis_id": parent["id"], "algorithm": "random", "budget_calls": 8}]}
+    monkeypatch.setattr("dqn_meent.workspace.research.run_research", lambda *args: result)
+    coordinator._run(run_id)
+    run = store.get(run_id, "research_run")
+    assert run["status"] == "completed", run
+    revised_parent = store.get(parent["id"], "hypothesis")
+    assert revised_parent["mechanism"] == parent["mechanism"]
+    assert revised_parent["reviews"][0] == note
+    critique = revised_parent["reviews"][1]
+    assert critique["author"] == "agent" and critique["research_run_id"] == run_id
+    assert "Locality needs evidence" in critique["text"]
+    coordinator._save_critiques(run, result)
+    assert len(store.get(parent["id"], "hypothesis")["reviews"]) == 2
+    assert store.list("trial", charter["id"]) == []
+    assert len(store.list("decision", charter["id"])) == 1
+    if children:
+        child = store.get(children[0]["id"], "hypothesis")
+        assert child["revision_context"]["reviews"] == [note]
+        assert child["research_run_id"] == run_id
+
+
 def test_hidden_test_trials_require_matching_frozen_finalist_and_are_absent_from_research_context(client):
     charter, tasks = create_campaign(client)
     test_task = next(item for item in tasks if item["split"] == "test")
