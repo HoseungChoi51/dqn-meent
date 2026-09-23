@@ -1,0 +1,256 @@
+"""HTTP contracts and researcher decisions, without any paid LLM calls."""
+import time
+
+from fastapi.testclient import TestClient
+import pytest
+
+from dqn_meent.workspace.api import create_app
+from dqn_meent.workspace.custom_optimizer import sandbox_status
+from dqn_meent.workspace.store import identifier, now
+
+
+SOURCE = '''
+def initialize(n_cells, seed, config):
+    return {"n": n_cells, "index": seed}
+def propose(state):
+    state["index"] += 1
+    return {"design": [(state["index"] >> i) & 1 for i in range(state["n"])], "state": state}
+def observe(state, design, efficiency):
+    return state
+'''
+
+
+@pytest.fixture
+def client(tmp_path, monkeypatch):
+    monkeypatch.setenv("GRATING_LLM_DISABLED", "true")
+    app = create_app(tmp_path / "workspace", start_workers=False)
+    with TestClient(app) as browser:
+        yield browser
+    for thread in app.state.workspace.research_threads.values():
+        thread.join(timeout=5)
+
+
+def create_campaign(client, name="API campaign"):
+    response = client.post("/api/campaigns", json={"name": name, "llm_budget_usd": 0,
+        "compute_budget_seconds": 500, "validation_reserve_seconds": 30,
+        "tasks": [{"name": "Development", "physics": {"n_cells": 6, "fourier_order": 1}},
+                  {"name": "Locked confirmation", "split": "test", "physics": {"n_cells": 6, "fourier_order": 2}}]})
+    assert response.status_code == 201, response.text
+    charter = response.json()
+    state = client.get("/api/state", params={"campaign_id": charter["id"]}).json()
+    return charter, state["tasks"]
+
+
+def hypothesis(client, charter, **kwargs):
+    payload = {"campaign_id": charter["id"], "title": "Mechanism with explicit assumptions",
+               "algorithm": "block_tabu", "algorithm_config": {"max_block_size": 3},
+               "mechanism": "Escape measured single-bit plateaus with coordinated moves.",
+               "rationale": "Contiguous interactions may reward block proposals.",
+               "assumptions": ["Unverified: block locality"], "risks": ["Nonlocal optical effects"]}
+    payload.update(kwargs)
+    response = client.post("/api/hypotheses", json=payload)
+    assert response.status_code == 201, response.text
+    return response.json()
+
+
+def trial_payload(charter, task, **kwargs):
+    payload = {"campaign_id": charter["id"], "task_id": task["id"], "algorithm": "random",
+               "wall_seconds": 10, "max_steps": 8}
+    payload.update(kwargs)
+    return payload
+
+
+def pending_decision(client, charter, task, *, title="Run the discriminating probe"):
+    store = client.app.state.workspace.store
+    action = {"id": identifier("action"), "campaign_id": charter["id"], "charter_version": charter["version"],
+              "kind": "probe", "title": title, "rationale": "A paired neighborhood probe can test the mechanism.",
+              "question": "Does the new proposal improve the plateau?", "task_id": task["id"],
+              "algorithm": "random", "budget_calls": 8, "status": "proposed"}
+    decision = {"id": identifier("decision"), "campaign_id": charter["id"], "charter_version": charter["version"],
+                "title": title, "context": action["rationale"], "status": "pending", "action_id": action["id"],
+                "options": [{"id": value, "label": value} for value in ("accept", "defer", "reject")],
+                "created_at": now()}
+    store.put("action", action)
+    store.put("decision", decision)
+    return decision
+
+
+def test_campaign_revision_keeps_trial_physics_and_archives_old_tasks(client):
+    charter, tasks = create_campaign(client)
+    response = client.post("/api/trials", json=trial_payload(charter, tasks[0]))
+    assert response.status_code == 201, response.text
+    original_trial = response.json()
+    changed = client.put(f"/api/campaigns/{charter['id']}", json={"objective": "Compare more complex binary devices",
+        "tasks": [{"name": "Revised development", "physics": {"n_cells": 8, "fourier_order": 1}}]})
+    assert changed.status_code == 200, changed.text
+    assert changed.json()["version"] == 2
+    state = client.get("/api/state", params={"campaign_id": charter["id"]}).json()
+    assert len(state["tasks"]) == 1 and state["tasks"][0]["physics"]["n_cells"] == 8
+    retained = next(item for item in state["trials"] if item["id"] == original_trial["id"])
+    assert retained["physics"]["n_cells"] == 6
+    assert retained["charter_version"] == 1 and retained["charter_superseded"]
+    assert client.post("/api/trials", json=trial_payload(charter, tasks[0])).status_code == 409
+    versions = client.app.state.workspace.store.list("charter", charter["id"])
+    assert [item["version"] for item in versions] == [1, 2]
+
+
+def test_external_origins_and_invalid_inputs_cannot_launch_jobs(client):
+    charter, tasks = create_campaign(client)
+    blocked = client.post("/api/trials", json=trial_payload(charter, tasks[0]), headers={"Origin": "https://unrelated.example"})
+    assert blocked.status_code == 403
+    invalid = client.post("/api/trials", json=trial_payload(charter, tasks[0], max_steps=-1))
+    assert invalid.status_code == 422
+    assert client.get("/api/trials/missing/artifacts/checkpoint.pkl").status_code == 404
+    assert client.app.state.workspace.store.list("trial", charter["id"]) == []
+
+
+def test_lineage_and_researcher_reviews_preserve_parent_and_source_provenance(client):
+    charter, _ = create_campaign(client)
+    source = client.post("/api/sources", json={"campaign_id": charter["id"], "title": "Researcher reference",
+        "url": "https://example.org/paper", "excerpt": "A supplied excerpt", "supports": "Mechanism precedent only"})
+    assert source.status_code == 201
+    assert source.json()["verification"] == "researcher_supplied_unverified"
+    parent = hypothesis(client, charter, sources=[source.json()])
+    child = hypothesis(client, charter, title="Boundary-aware revision", parent_ids=[parent["id"]],
+                       algorithm_config={"max_block_size": 5})
+    reviewed = client.post(f"/api/hypotheses/{child['id']}/review", json={"text": "The cheap probe must distinguish boundary and arbitrary moves."})
+    assert reviewed.status_code == 200
+    assert reviewed.json()["reviews"][-1]["author"] == "researcher"
+    assert client.post(f"/api/hypotheses/{child['id']}/status", json={"status": "archived"}).status_code == 200
+    store = client.app.state.workspace.store
+    assert store.get(parent["id"], "hypothesis") == parent
+    assert store.get(child["id"], "hypothesis")["parent_ids"] == [parent["id"]]
+    other, _ = create_campaign(client, name="Separate campaign")
+    rejected = client.post("/api/hypotheses", json={"campaign_id": other["id"], "title": "Invalid cross-campaign fork", "parent_ids": [parent["id"]]})
+    assert rejected.status_code == 409
+
+
+def test_hidden_test_trials_require_matching_frozen_finalist_and_are_absent_from_research_context(client):
+    charter, tasks = create_campaign(client)
+    test_task = next(item for item in tasks if item["split"] == "test")
+    assert client.post("/api/trials", json=trial_payload(charter, test_task)).status_code == 409
+    finalist = hypothesis(client, charter, status="finalist")
+    mismatch = client.post("/api/trials", json=trial_payload(charter, test_task, algorithm="random",
+        confirmatory=True, hypothesis_id=finalist["id"]))
+    assert mismatch.status_code == 409, "A finalist id must not authorize a different algorithm"
+    altered = client.post("/api/trials", json=trial_payload(charter, test_task, algorithm="block_tabu",
+        algorithm_config={"max_block_size": 5}, confirmatory=True, hypothesis_id=finalist["id"]))
+    assert altered.status_code == 409, "Confirmatory parameters must match the frozen method"
+    accepted = client.post("/api/trials", json=trial_payload(charter, test_task, algorithm="block_tabu",
+        algorithm_config=finalist["algorithm_config"], confirmatory=True, hypothesis_id=finalist["id"]))
+    assert accepted.status_code == 201, accepted.text
+    context = client.app.state.coordinator.context(charter["id"])
+    assert test_task["id"] not in {item["id"] for item in context["tasks"]}
+    assert accepted.json()["id"] not in {item["id"] for item in context["trials"]}
+
+
+def test_researcher_decision_launches_once_and_keeps_override_in_notebook(client):
+    charter, tasks = create_campaign(client)
+    decision = pending_decision(client, charter, tasks[0])
+    accepted = client.post(f"/api/decisions/{decision['id']}/resolve", json={"choice": "accept", "comment": "Run this probe before extending the surrogate."})
+    assert accepted.status_code == 200, accepted.text
+    assert accepted.json()["status"] == "resolved"
+    assert accepted.json()["outcome"]["trial_id"]
+    repeated = client.post(f"/api/decisions/{decision['id']}/resolve", json={"choice": "accept"})
+    assert repeated.status_code == 409
+    deferred = pending_decision(client, charter, tasks[0], title="Expensive follow-up")
+    response = client.post(f"/api/decisions/{deferred['id']}/resolve", json={"choice": "defer", "comment": "Preserve this direction; evidence is insufficient."})
+    assert response.status_code == 200
+    state = client.get("/api/state", params={"campaign_id": charter["id"]}).json()
+    assert len(state["trials"]) == 1
+    assert any("evidence is insufficient" in item["content"] for item in state["messages"])
+    assert len([item for item in state["decisions"] if item["status"] == "resolved"]) == 2
+
+
+def test_charter_revision_invalidates_old_action_without_spending_compute(client):
+    charter, tasks = create_campaign(client)
+    decision = pending_decision(client, charter, tasks[0])
+    assert client.put(f"/api/campaigns/{charter['id']}", json={"objective": "Revised scientific question"}).status_code == 200
+    stale = client.post(f"/api/decisions/{decision['id']}/resolve", json={"choice": "accept"})
+    assert stale.status_code == 409
+    assert "charter" in stale.json()["detail"].lower()
+    assert client.app.state.workspace.store.list("trial", charter["id"]) == []
+
+
+def test_offline_research_is_interactive_and_exports_rationale_without_fake_llm_usage(client):
+    charter, _ = create_campaign(client)
+    submitted = client.post("/api/research", json={"campaign_id": charter["id"], "mode": "generate",
+        "message": "Investigate boundary-preserving block moves before a long DQN training run."})
+    assert submitted.status_code == 202, submitted.text
+    run_id = submitted.json()["id"]
+    store = client.app.state.workspace.store
+    deadline = time.monotonic() + 10
+    while time.monotonic() < deadline:
+        run = store.get(run_id, "research_run")
+        if run["status"] not in {"running", "stopping"}:
+            break
+        time.sleep(.02)
+    assert run["status"] != "failed", run
+    assert run["status"] not in {"running", "stopping"}
+    assert run["usage"].get("calls", 0) == 0
+    state = client.get("/api/state", params={"campaign_id": charter["id"]}).json()
+    assert not state["settings"]["llm_configured"]
+    assert any("boundary-preserving" in str(item).lower() for item in state["hypotheses"])
+    report = client.get(f"/api/campaigns/{charter['id']}/export")
+    assert report.status_code == 200
+    assert "text/markdown" in report.headers["content-type"]
+    assert "boundary-preserving" in report.text.lower()
+    assert "rationale_only" in report.text
+    assert state["trials"] == []
+
+
+def test_custom_execution_requires_verified_reviewed_source_and_rejects_substitution(client):
+    status = sandbox_status()
+    if not status["available"]:
+        pytest.skip(status["reason"])
+    charter, tasks = create_campaign(client)
+    custom = hypothesis(client, charter, algorithm="custom", algorithm_config={"parameters": {"variant": "reviewed"}}, source=SOURCE)
+    request = trial_payload(charter, tasks[0], algorithm="custom", hypothesis_id=custom["id"])
+    assert client.post("/api/trials", json=request).status_code == 409
+    client.post(f"/api/hypotheses/{custom['id']}/review", json={"text": "The source implements the dossier and stores all state explicitly."})
+    verified = client.post(f"/api/hypotheses/{custom['id']}/verify", json={"n_cells": 8, "seed": 0})
+    assert verified.status_code == 200, verified.text
+    stored = client.app.state.workspace.store.get(custom["id"], "hypothesis")
+    assert "verified" in stored["implementation_status"]
+    assert stored["executable"]
+    accepted = client.post("/api/trials", json=request)
+    assert accepted.status_code == 201, accepted.text
+    assert accepted.json()["algorithm_config"]["source"] == SOURCE
+    assert accepted.json()["algorithm_config"]["parameters"] == {"variant": "reviewed"}
+    substituted = client.post("/api/trials", json={**request, "algorithm_config": {"source": SOURCE + "\n# Unreviewed revision"}})
+    assert substituted.status_code == 409
+
+
+def test_interrupted_provider_reservation_is_closed_once_without_refund_or_replay(client, monkeypatch):
+    charter, _ = create_campaign(client)
+    revised = client.put(f"/api/campaigns/{charter['id']}", json={"llm_budget_usd": 1})
+    assert revised.status_code == 200
+    coordinator = client.app.state.coordinator
+    workspace = client.app.state.workspace
+    monkeypatch.setattr(coordinator, "_thread", lambda record: None)
+    submitted = client.post("/api/research", json={"campaign_id": charter["id"], "message": "A request interrupted after reserving cost"})
+    assert submitted.status_code == 202
+    run_id = submitted.json()["id"]
+    coordinator._emit(run_id, {"type": "provider_call_reserved", "role": "research_synthesizer", "usage": {
+        "calls": 1, "cost_usd": .4, "reserved_cost_usd": .4,
+        "pending_reservation": {"id": "provider-attempt", "cost_usd_reserved": .4}}})
+    workspace.start()
+    try:
+        state = client.get("/api/state", params={"campaign_id": charter["id"]}).json()
+        assert state["budget"]["llm_spent_usd"] == .4
+        decision = next(item for item in state["decisions"] if item.get("research_run_id") == run_id)
+        assert client.post(f"/api/research_runs/{run_id}/control", json={"action": "resume"}).status_code == 409
+        response = client.post(f"/api/decisions/{decision['id']}/resolve", json={"choice": "close_reserved", "comment": "Keep the conservative charge; do not resend."})
+        assert response.status_code == 200, response.text
+        assert response.json()["outcome"]["reserved_cost_retained"]
+        closed = workspace.store.get(run_id, "research_run")
+        assert closed["status"] == "closed_uncertain"
+        assert closed["usage"]["cost_usd"] == .4
+        repeated = client.post(f"/api/decisions/{decision['id']}/resolve", json={"choice": "close_reserved"})
+        assert repeated.status_code == 409
+        next_run = client.post("/api/research", json={"campaign_id": charter["id"], "message": "Continue using unreserved funds"})
+        assert next_run.status_code == 202
+        assert next_run.json()["request"]["llm_budget_usd"] == pytest.approx(.6)
+        assert client.get("/api/state", params={"campaign_id": charter["id"]}).json()["budget"]["llm_spent_usd"] == .4
+    finally:
+        workspace.close()

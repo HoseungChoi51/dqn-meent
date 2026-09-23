@@ -1,13 +1,31 @@
-# DQN–MEENT inverse design
+# Grating Lab: researcher-guided inverse design
 
-A runnable, modern reconstruction of the **DQN-centered optimization loop** in Seo et al., *Structural Optimization of a One-Dimensional Freeform Metagrating Deflector via Deep Reinforcement Learning*, ACS Photonics 9, 452–458 (2022). This package uses **real MEENT RCWA evaluations** and PyTorch Double DQN. It is a starting framework, not a claim of matching the paper's optimization performance.
+A local research workspace for comparing, designing, and improving optimization strategies for binary 1D optical gratings. The React dashboard combines concurrent experiments, strategy dossiers, researcher decisions, adaptive LLM discussions, source retrieval, and cost-aware comparisons. Numerical experiments use **real MEENT RCWA evaluations**.
+
+The original reconstruction of the DQN optimization loop in Seo et al., *Structural Optimization of a One-Dimensional Freeform Metagrating Deflector via Deep Reinforcement Learning*, ACS Photonics 9, 452–458 (2022), remains available alongside random search, restart hill climbing, annealing, block tabu, population, and surrogate search. The workspace supports reviewed custom optimizer source. Implementation and smoke tests do not establish a state-of-the-art result.
 
 ## Start here
 
-Linux, Python 3.12 or 3.13, and [uv](https://docs.astral.sh/uv/) are required. From this directory:
+Use Linux, Python 3.12 or 3.13, [uv](https://docs.astral.sh/uv/), and a supported Node.js installation. From this directory:
 
 ```bash
 uv sync --frozen --extra dev
+cd frontend
+npm ci
+npm run build
+cd ..
+uv run grating-lab --directory runs/workspace --workers 2 --port 8765
+```
+
+Open **http://127.0.0.1:8765**. Create a campaign, define development configurations and budgets, then launch a small experiment or discuss a hypothesis with the research partner. Data remain in the workspace directory after closing the browser.
+
+**Codex with `gpt-6-sol` is the default for every research role, with model execution disabled until you configure it.** The dashboard and numerical experiments work immediately; research requests use explicitly labeled curated guidance while configuration is deferred. Codex uses your subscription allowance, tracked separately from paid API spending. Existing `.key` credentials are ignored unless you explicitly enable an API provider, and there is no automatic paid fallback. See the [workspace guide](docs/workspace.md) when you are ready to configure Codex, and for workflows, custom algorithms, and recovery.
+
+The [implementation evidence map](docs/implementation-status.md) connects the [research-system plan](docs/agentic-algorithm-discovery-plan.md) to code, tests, and unverified research outcomes.
+
+For the original single-run numerical interface:
+
+```bash
 uv run dqn-meent train --config configs/smoke.json --output runs/smoke
 uv run dqn-meent evaluate --run runs/smoke --orders 5 15 25 40
 uv run dqn-meent design --run runs/smoke --output runs/smoke/design.png
@@ -103,6 +121,9 @@ Do not modify the step count to extend a completed checkpoint: that changes the 
 
 ## Code map
 
+- `src/dqn_meent/workspace/`: API, persistent records, worker service, adaptive research, literature metadata, statistical comparisons, and isolated custom optimizers.
+- `frontend/`: React/TypeScript dashboard and browser interaction tests.
+- `docs/workspace.md`: installation, research workflows, provider setup, and custom optimizer protocol.
 - `src/dqn_meent/config.py`: validated experiment configuration.
 - `physics.py`: MEENT adapter, material resolution, physical checks and bounded LRU cache.
 - `environment.py`: binary design MDP and Gymnasium interface.

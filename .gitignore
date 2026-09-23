@@ -4,3 +4,9 @@ __pycache__/
 *.pyc
 runs/
 dist/
+.key
+.env
+.env.*
+frontend/node_modules/
+frontend/playwright-report/
+frontend/test-results/
