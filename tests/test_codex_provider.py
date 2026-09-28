@@ -140,6 +140,7 @@ def test_timeout_stops_cli_with_uncertain_usage(tmp_path):
         run_codex("role", "context", SCHEMA, config)
     assert raised.value.code == "timeout"
     assert raised.value.usage_unknown is True
+    assert "inference" in str(raised.value) and "second time limit" in str(raised.value)
     assert time.monotonic() - started < 3
 
 

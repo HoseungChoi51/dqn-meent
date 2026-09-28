@@ -77,10 +77,12 @@ class CommandService:
     @staticmethod
     def describe():
         """Use the application's schemas in prompts instead of a second tool model."""
-        from optimization_framework.research.discovery.models import DiscoveryStart, DiscoveryControl, DiscoveryAmend
+        from optimization_framework.research.discovery.models import DiscoveryStart, DiscoveryControl, DiscoveryAmend, DiscoveryRetry
+        from optimization_framework.research.model_policy import ModelPolicyUpdate
         from optimization_framework.research.discovery.assessment import AssessmentSave, AssessmentLaunch, AssessmentDecision
         models = {"campaign.create": CampaignInput, "campaign.update": CampaignUpdateInput,
-            "discovery.start": DiscoveryStart, "discovery.control": DiscoveryControl, "discovery.amend": DiscoveryAmend,
+            "models.configure": ModelPolicyUpdate,
+            "discovery.start": DiscoveryStart, "discovery.control": DiscoveryControl, "discovery.amend": DiscoveryAmend, "discovery.retry": DiscoveryRetry,
             "discovery.assessment.save": AssessmentSave, "discovery.assessment.launch": AssessmentLaunch, "discovery.assessment.decide": AssessmentDecision,
             "context.edit": ContextEditInput, "context.import": ContextImportInput, "issue.resolve": IssueResolveInput,
             "hypothesis.create": HypothesisInput, "hypothesis.review": HypothesisReviewInput,
@@ -214,6 +216,9 @@ class CommandService:
         payload = dict(command.payload)
         if payload.get("campaign_id", command.campaign_id) != command.campaign_id:
             raise ValueError("Command payload refers to another campaign")
+        if command.operation == "models.configure":
+            record = self.workspace.models.save(command.campaign_id, payload)
+            return {"model_policy_id": record["id"], "revision": record["revision"]}
         if command.operation == "discovery.start":
             session = self.workspace.discovery.start(command.campaign_id, payload, command.id)
             return {"session_id": session["id"], "session": session}
@@ -223,6 +228,8 @@ class CommandService:
         if command.operation == "discovery.amend":
             session = self.workspace.discovery.amend(command.campaign_id, payload)
             return {"session_id": session["id"], "session": session}
+        if command.operation == "discovery.retry":
+            return self.workspace.discovery.retry(command.campaign_id, payload, command.id)
         if command.operation == "discovery.assessment.save":
             assessment = self.workspace.discovery.assessments.save(command.campaign_id, payload, "assessment_" + command.id, authority=actor)
             return {"assessment_id": assessment["id"], "assessment": assessment}

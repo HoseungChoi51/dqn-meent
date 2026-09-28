@@ -24,11 +24,13 @@ test('Develop strategies exposes a paused request without presenting an old fail
   await page.goto('/');
   await page.getByRole('button', { name: 'Hypotheses', exact: true }).click();
   await page.getByRole('button', { name: 'Develop strategies', exact: true }).click();
+  await page.getByRole('button', { name: 'Send to campaign manager', exact: true }).click();
   const panel = page.getByRole('complementary', { name: 'Research conversation' });
   await expect(panel).toContainText('Request saved · discovery paused');
   await expect(panel).not.toContainText('Historical literature validation failure');
   await panel.getByRole('button', { name: 'Resume discovery and process request' }).click();
   await expect.poll(() => writes.map(item => item.operation)).toEqual(['research.start', 'discovery.control']);
   expect(writes[1].payload).toEqual({ session_id: 'session', action: 'resume', expected_control_revision: 7 });
+  expect(writes[0].payload.proposal_operation).toBe('expand');
   await expect(panel).toContainText('Queued for manager');
 });

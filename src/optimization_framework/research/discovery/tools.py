@@ -39,6 +39,14 @@ class Read(Contract):
 
 class Evidence(Contract):
     record_id: str = Field(min_length=1, max_length=300)
+    pointer: str = Field(default="", max_length=8192,
+        description="RFC 6901 JSON pointer into the record (or experiment/assessment reply). Empty selects the whole value; indexes provide exact child pointers.")
+    offset: int = Field(default=0, ge=0,
+        description="Entry offset for array/object pages; character offset for text pages.")
+    limit: int = Field(default=50, ge=1, le=100,
+        description="Maximum entries in a projected array/object page. Text pages use max_bytes. Small complete values remain unchanged.")
+    max_bytes: int = Field(default=24 * 1024, ge=1024, le=24 * 1024,
+        description="Maximum serialized UTF-8 result bytes including paging metadata. Choose a smaller page (for example 4096) when the current context has little room; this also bounds text pages.")
 
 
 class Implementations(Contract):
@@ -53,9 +61,16 @@ class AssessmentReference(Contract):
     assessment_id: str = Field(min_length=1, max_length=300)
 
 
+class SupersedeTask(Contract):
+    task_id: str = Field(min_length=1, max_length=300, description="Exact ID of an obsolete assignment that has never sent a model call or run tools.")
+    replacement_task_id: str = Field(min_length=1, max_length=300, description="Exact ID of the replacement assignment in this session, preferably its completed narrowed replacement.")
+    reason: str = Field(min_length=1, max_length=5000)
+
+
 ARGUMENTS = {"source.search": Search, "source.ingest": Ingest, "source.read": Read,
              "evidence.read": Evidence, "experiment.inspect": Evidence, "assessment.inspect": Evidence, "implementation.inspect": Implementations,
-             "assessment.prepare": PrepareAssessment, "assessment.launch": AssessmentReference, "assessment.wait": AssessmentReference}
+             "assessment.prepare": PrepareAssessment, "assessment.launch": AssessmentReference, "assessment.wait": AssessmentReference,
+             "task.supersede": SupersedeTask}
 
 
 def schemas():
@@ -171,6 +186,8 @@ class DiscoveryTools:
         arguments = ARGUMENTS[name].model_validate(request["call"]["arguments"]).model_dump(exclude={"schema_version"})
         session = self.store.get(request["session_id"], "discovery_session")
         campaign_id = request["campaign_id"]
+        if name == "task.supersede":
+            return self.controller.supersede_task(request, arguments)
         if name in {"assessment.prepare", "assessment.launch"}:
             return self._assessment_command(request, name, arguments)
         if name == "assessment.wait":
@@ -195,28 +212,36 @@ class DiscoveryTools:
             self.controller._evidence(session, arguments["source_id"] or arguments["capture_id"])
             return self.reader.read(campaign_id, **arguments)
         if name in {"evidence.read", "experiment.inspect", "assessment.inspect"}:
+            from .record_view import view_record
             task = self.store.get(request["task_id"], "discovery_task")
             record = self.controller._evidence(session, arguments["record_id"], task=task)
+            view = {"record_id": arguments["record_id"], "pointer": arguments["pointer"],
+                    "offset": arguments["offset"], "limit": arguments["limit"], "tool": name,
+                    "max_bytes": arguments["max_bytes"]}
             if name == "assessment.inspect":
                 if self.store.get_entry(record["id"])["kind"] != "discovery_assessment":
                     raise ValueError("Assessment inspection requires an assessment record")
-                return {"assessment": record, "readiness": self.controller.assessments.readiness(record["id"]),
-                        "evidence": self.controller.assessments.evidence(record["id"])}
+                result = {"assessment": record, "readiness": self.controller.assessments.readiness(record["id"]),
+                          "evidence": self.controller.assessments.evidence(record["id"])}
+                return view_record(result, **view)
             if name == "experiment.inspect":
                 if self.store.get_entry(arguments["record_id"])["kind"] != "trial":
                     raise ValueError("Experiment inspection requires an experiment record")
                 if record["task_id"] != session["problem_task_id"]:
                     raise ValueError("Experiment belongs to a different problem")
-                return {"trial": record, "curve": self.workspace.metrics(record["id"])}
-            return {"record": record}
+                return view_record({"trial": record, "curve": self.workspace.metrics(record["id"])}, **view)
+            # The existing envelope is retained, including for exact small
+            # subtrees. Leave room for its serialized bytes in the result cap.
+            return {"record": view_record(record, envelope_bytes=32, **view)}
         catalog = self.workspace.implementations.catalog(refresh=True)
+        from optimization_framework.optimizers.registry import METHODS
         versions = catalog["versions"]
         if arguments["version_id"]:
             versions = [version for version in versions if version["id"] == arguments["version_id"]]
             if not versions:
                 raise ValueError("Implementation version is not available")
         return {"versions": [{key: row[key] for key in ("id", "name", "status", "spec", "validation_report") if key in row}
-                             for row in versions], "connection_error": catalog["connection_error"]}
+                             for row in versions], "bundled_methods": METHODS, "connection_error": catalog["connection_error"]}
 
     def _assessment_command(self, request, name, arguments):
         from optimization_framework.contracts.commands import Command
@@ -259,6 +284,17 @@ class DiscoveryTools:
                 try:
                     receipt = self.store.get("receipt_" + request["id"], "discovery_tool_receipt")
                 except KeyError:
+                    if request["call"]["tool"] == "task.supersede":
+                        try:
+                            resolution = self.store.get("resolution_" + request["id"], "discovery_task_resolution")
+                        except KeyError:
+                            # This local transaction either committed fully or
+                            # did nothing. Recheck authority before retrying it.
+                            request.update(status="pending")
+                            self.store.put("discovery_tool", request)
+                        else:
+                            self._receipt(request, result=resolution["outcome"])
+                        continue
                     if request["call"]["tool"] in {"assessment.prepare", "assessment.launch"}:
                         try:
                             command = self.store.get("command_" + request["id"], "work_command")

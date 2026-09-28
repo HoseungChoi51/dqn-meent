@@ -9,6 +9,7 @@ from typing import Any, Literal
 from pydantic import BaseModel, ConfigDict, Field, model_serializer, model_validator
 from optimization_framework.contracts.capabilities import OptimizerCapabilities
 from optimization_framework.contracts.evaluators import EvaluatorManifest
+from optimization_framework.research.model_policy import ModelPolicy
 
 
 def digest(value) -> str:
@@ -212,6 +213,15 @@ class JobRequest(Contract):
     compute_seconds: float = Field(default=120, gt=0, le=86400)
     api_budget_usd: float = Field(default=0, ge=0, le=10000)
     grant_id: str = Field(min_length=1, max_length=200)
+    model_policy: ModelPolicy | None = None
+
+    @model_serializer(mode="wrap")
+    def compatible_serialization(self, handler):
+        result = handler(self)
+        # Preserve the identity of requests accepted before model policies.
+        if self.model_policy is None:
+            result.pop("model_policy", None)
+        return result
 
     @model_validator(mode="before")
     @classmethod

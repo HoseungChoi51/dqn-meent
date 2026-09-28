@@ -1,3 +1,5 @@
+import type { ResearchProgressState } from './researchProgress';
+
 export type Json = Record<string, any>;
 export type Task = { id: string; name: string; physics: Json; split: string; problem_id?: string; configuration?: Json; fidelity?: Json; problem?: Json;
   evaluator_manifest?: Json; evaluator_requirement_id?: string; evaluator_readiness?: Json; evaluator_version_id?: string };
@@ -13,6 +15,7 @@ export type Hypothesis = {
   id: string; title: string; mechanism: string; rationale: string; assumptions: (string | Json)[];
   risks: string[]; origin?: string; source?: string; executable?: boolean; sources: (string | Json)[]; parent_ids: string[]; algorithm: string;
   implementation_version_id?: string; implementation_readiness?: Json;
+  concept_review?: Json; requires_concept_review?: boolean; candidate_id?: string;
   algorithm_config: Json; status: string; status_revision?: number; reviews: Json[]; created_at: string;
   predictions?: string[]; cheapest_test?: string; novelty?: string; startup_cost?: string;
   change_summary?: string; feedback_response?: string;
@@ -35,6 +38,7 @@ export type State = {
   campaigns: Campaign[]; campaign: Campaign | null; tasks: Task[]; hypotheses: Hypothesis[];
   trials: Trial[]; decisions: Decision[]; messages: Json[]; events: Json[]; algorithms: Algorithm[];
   settings: { llm_configured: boolean; model?: string; [key: string]: any }; research_runs: Json[];
+  research_progress?: ResearchProgressState;
   [key: string]: any;
 };
 

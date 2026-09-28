@@ -66,6 +66,13 @@ to make that the persistent default. The application reads neither shell `.env`
 files nor model credentials from this JSON file. Existing provider environment
 variables (for example `GRATING_CODEX_BINARY`) can be set in the invoking shell.
 
+Set `codex_timeout_seconds` in the server JSON to persist the per-call Codex
+deadline (5–600 seconds). The discovery review instance allows 600 seconds for
+extra-high reasoning. This limit does not change model-call counts, API budgets,
+or implementation job allocations; an implementation job's remaining deadline
+can shorten a call. Timeout receipts retain unknown subscription usage, and
+failed tasks require an explicit retry rather than an invisible repeat call.
+
 ## Tailnet permissions
 
 Connect the machine to Tailscale beforehand. The launcher uses

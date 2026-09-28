@@ -112,7 +112,7 @@ def _capture(
                 elapsed = time.monotonic() - started
                 if elapsed >= timeout:
                     raise CodexProviderError(
-                        "Codex exceeded the configured time limit; no fallback was used.",
+                        f"Codex {stage} exceeded its {timeout:.1f}-second time limit; no fallback was used.",
                         code="timeout", usage_unknown=stage == "inference",
                     )
                 if on_progress is not None and time.monotonic() >= next_progress:
@@ -268,7 +268,7 @@ def run_codex(
             prompt += "\nKeep the final response concise; target at most " + str(config["max_output_tokens"]) + " output tokens."
         remaining = timeout - (time.monotonic() - started)
         if remaining <= 0:
-            raise CodexProviderError("Codex authentication exceeded the time limit.", code="timeout")
+            raise CodexProviderError(f"Codex authentication exceeded the {timeout:.1f}-second call time limit.", code="timeout")
         code, stdout, stderr = _capture(
             command, directory=directory, environment=environment, timeout=remaining,
             input_bytes=prompt.encode("utf-8"), output_limit=output_limit,

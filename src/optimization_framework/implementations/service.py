@@ -290,6 +290,7 @@ class ImplementationService:
             adapter = factory(max_calls=request.max_calls, max_output_tokens=8192,
                               budget_usd=request.api_budget_usd, usage=job.get("usage") or None,
                               reservation_callback=emit, config={**provider_status(),
+                                  "model_policy": request.model_policy.model_dump(mode="json") if request.model_policy else None,
                                   "deadline_monotonic": started + request.compute_seconds - spent})
             if is_evaluator:
                 spec = request.spec

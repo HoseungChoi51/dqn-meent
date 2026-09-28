@@ -10,9 +10,10 @@ from optimization_framework.research.engine import BudgetUnavailable, LLMAdapter
 from optimization_framework.research.providers import provider_status
 from optimization_framework.storage.sqlite import identifier, now
 
-from .models import DiscoveryAmend, DiscoveryControl, DiscoveryResult, DiscoveryStart, DiscoveryTaskBrief
+from .models import DiscoveryAmend, DiscoveryControl, DiscoveryResult, DiscoveryRetry, DiscoveryStart, DiscoveryTaskBrief
 from .tools import DiscoveryTools, schemas as tool_schemas
 from . import knowledge
+from . import proposals
 from .assessment import Assessments
 
 
@@ -45,6 +46,11 @@ the campaign_manager can call assessment.prepare on a saved artifact ID, assessm
 on the returned assessment ID, and assessment.wait for actual measured results. These tools
 retain the researcher's existing delegated authority and allocations. Specialists cannot
 launch experiments. Use assessment.wait instead of repeatedly polling with model calls.
+When a narrower assignment replaces an obsolete assignment that never sent a model call,
+the campaign manager can call task.supersede with its exact task ID, the replacement task
+ID and a reason. A prose claim of replacement does not retire the old task. Wait for the
+tool receipt before concluding the session. Completed or dispatched work cannot be retired
+with this tool; preserve its scientific evidence, costs and unresolved outcomes.
 After measurements, assign an independent reviewer and a generator to revise promising
 ideas using explicit parent_candidate_ids and revision_basis. Explain what changed and why.
 When proposing sibling generation/review tasks, give all siblings exactly the same
@@ -61,6 +67,19 @@ generation only after a saved problem_dossier and literature_map are available; 
 IDs or depend on the tasks producing them. Newly submitted artifacts receive IDs in the
 next context. If assignments fail, saved artifacts remain available: correct the assignments
 without repeating the scientific work. Report any actual literature coverage gaps honestly.
+Honor discovery.researcher_request: expand explores new mechanisms beyond existing proposals;
+diversify generates substantive alternatives to the selected parent; hybrid creatively combines
+BOTH selected parents. Preserve exact parent IDs, explain the interaction, conflicts, and what
+each mechanism contributes. Do not merely concatenate names or vary hyperparameters.
+Completed generation automatically queues a separate proposal_reviewer. That reviewer returns
+proposal_review artifacts with verdict test/revise/reject, written reasoning and discriminating
+tests. Wait for its verdict before numerical execution. A test verdict is not performance evidence.
+Judge conceptual plausibility separately from implementation availability and allocations. Missing
+code alone belongs in implementation_followup, not required_changes. Consult current readiness
+records before claiming a parent implementation is unavailable; older proposal text can be stale.
+After approval, prepare a small assessment with rough tuning, multiple seeds and parent/baseline
+comparisons. Review measured results before allocating more resources. Missing code returns to
+the manager for library reuse or the separate implementation and correctness-validation service.
 """
 
 
@@ -123,17 +142,32 @@ class DiscoveryController:
         tasks = []
         for brief in briefs:
             dependencies = []
+            artifact_dependencies = []
             for key in brief.dependencies:
                 identity = identities.get(key, key)
                 if identity not in existing and identity not in identities.values():
                     matches = [row["id"] for row in existing.values() if row["brief"]["key"] == key]
                     if len(matches) == 1:
                         identity = matches[0]
+                if identity not in existing and identity not in identities.values():
+                    try:
+                        entry = self.store.get_entry(identity)
+                    except KeyError:
+                        entry = None
+                    if entry and entry["kind"] == "discovery_artifact":
+                        artifact = self._evidence(session, identity)
+                        if artifact.get("stale"):
+                            raise ValueError("A task cannot depend on stale scientific evidence")
+                        # A saved artifact is already available. Preserve this
+                        # explicit prerequisite as evidence rather than treating
+                        # its identifier as the ID of a still-running task.
+                        artifact_dependencies.append(identity)
+                        continue
                 dependencies.append(identity)
             if any(key not in existing and key not in identities.values() for key in dependencies):
                 raise ValueError("Task dependencies must belong to this discovery session; use exact task IDs or an unambiguous existing task key")
             evidence_ids = []
-            for evidence_id in brief.evidence_ids:
+            for evidence_id in [*brief.evidence_ids, *artifact_dependencies]:
                 resolved = identities.get(evidence_id, evidence_id)
                 matches = [row["id"] for row in existing.values() if row["brief"]["key"] == evidence_id]
                 if resolved == evidence_id and len(matches) == 1:
@@ -145,8 +179,10 @@ class DiscoveryController:
                     self._evidence(session, resolved)
                     if resolved in existing and resolved not in dependencies:
                         dependencies.append(resolved)
-                evidence_ids.append(resolved)
-            brief = brief.model_copy(update={"evidence_ids": evidence_ids})
+                if resolved not in evidence_ids:
+                    evidence_ids.append(resolved)
+            brief = brief.model_copy(update={"evidence_ids": evidence_ids,
+                "dependencies": [key for key in brief.dependencies if key not in artifact_dependencies]})
             task = {"id": identities[brief.key], "schema_version": 1, "campaign_id": session["campaign_id"],
                 "session_id": session["id"], "brief": brief.model_dump(mode="json"), "dependencies": dependencies,
                 "batch_id": batch_id,
@@ -154,6 +190,20 @@ class DiscoveryController:
                                      if brief.stage in {"generate", "review"} else None),
                 "status": "queued", "created_at": now(), "parent_task_id": parent_task_id, "step": 0,
                 "guidance_revision": self.workspace.memory.state(session["campaign_id"])["guidance_revision"]}
+            if parent_task_id:
+                parent = self.store.get(parent_task_id, "discovery_task")
+                task["proposal_request_id"] = parent.get("proposal_request_id") or parent.get("manager_command_id")
+                if task["proposal_request_id"]:
+                    # Carry the researcher's selected targets through every hop,
+                    # while allowing the manager to narrow scientific evidence.
+                    # The command lineage also retains its feedback snapshot;
+                    # a parent's entire reading list is not inherited work.
+                    request = proposals.request_context(self.store, task)["request"]
+                    selected = list(request.get("parent_hypothesis_ids", []))
+                    if request.get("hypothesis_id"):
+                        selected.append(request["hypothesis_id"])
+                    task["brief"]["evidence_ids"] = list(dict.fromkeys([
+                        *task["brief"]["evidence_ids"], *selected]))
             tasks.append(task)
         graph = {**{key: row["dependencies"] for key, row in existing.items()}, **{row["id"]: row["dependencies"] for row in tasks}}
         visiting, visited = set(), set()
@@ -268,6 +318,169 @@ class DiscoveryController:
         self.store.put("discovery_session", session, "discovery.policy_changed")
         return session
 
+    def retry(self, campaign_id, values, command_id):
+        """Authorize a new call after a recorded timeout; never replay its attempt."""
+        values = DiscoveryRetry.model_validate(values)
+        with self.workspace.lock, self.store.transaction():
+            session = self.store.get(values.session_id, "discovery_session")
+            if session["campaign_id"] != campaign_id or session["status"] in TERMINAL:
+                raise ValueError("Select an active discovery session in this campaign")
+            if values.expected_control_revision != session["control_revision"]:
+                raise ValueError("Discovery control changed; refresh before retrying tasks")
+            campaign = self.store.get(campaign_id, "campaign")
+            guidance = self.workspace.memory.state(campaign_id)["guidance_revision"]
+            if session["charter_version"] != campaign["version"] or session["guidance_revision"] != guidance:
+                raise ValueError("Campaign charter or guidance changed; ask the manager for revised assignments")
+            selected = []
+            responses = self.store.list("discovery_response", campaign_id)
+            steps = self.store.list("discovery_step", campaign_id)
+            tool_requests = self.store.list("discovery_tool", campaign_id)
+            for task_id in values.task_ids:
+                task = self.store.get(task_id, "discovery_task")
+                if task["campaign_id"] != campaign_id or task["session_id"] != session["id"]:
+                    raise ValueError("Retry tasks must belong to this discovery session")
+                if task["status"] != "failed" or not task.get("run_id") or not task.get("attempt_id"):
+                    raise ValueError("Only failed tasks with a saved provider attempt can be retried")
+                if self.threads.get(task_id) and self.threads[task_id].is_alive():
+                    raise ValueError("Wait for the failed task's worker to finish before retrying")
+                run = self.store.get(task["run_id"], "research_run")
+                if run["guidance_revision"] != guidance or run["charter_version"] != campaign["version"]:
+                    raise ValueError("Campaign charter or guidance changed; ask the manager for revised assignments")
+                if run.get("usage", {}).get("pending_reservation") or run["status"] == "needs_reconciliation":
+                    raise ValueError("Reconcile the pending provider reservation before retrying")
+                receipts = [row for row in responses if row["task_id"] == task_id and row["step"] == task["step"]]
+                if (not receipts or any(row["event"]["type"] != "provider_error" or row["event"].get("error") != "timeout" for row in receipts)
+                        or any(row["task_id"] == task_id and row["id"] == f"{task_id}_step_{task['step']}" for row in steps)
+                        or any(row["task_id"] == task_id and row.get("step_id") == f"{task_id}_step_{task['step']}" for row in tool_requests)):
+                    raise ValueError("Retry requires a recorded timeout without accepted output or tool effects for this attempt")
+                if run.get("usage", {}).get("calls", 0) >= session["policy"]["max_calls_per_task"]:
+                    raise ValueError("The task call allocation is exhausted; amend the allocation before retrying")
+                selected.append((task, run, receipts[-1]))
+            calls = sum(row.get("usage", {}).get("calls", 0) for row in self._usage(session))
+            specialist_count = sum(task["brief"]["role"] != "campaign_manager" for task, _, _ in selected)
+            if (calls + len(selected) > session["policy"]["model_call_limit"] or specialist_count and
+                    calls + specialist_count > session["policy"]["model_call_limit"] - session["policy"]["synthesis_call_reserve"]):
+                raise ValueError("The session call allocation cannot cover these retries while retaining its synthesis reserve")
+            timestamp = now()
+            retry_id = "discovery_retry_" + command_id
+            previous = [{"task_id": task["id"], "attempt_id": task["attempt_id"], "step": task["step"],
+                "error": task.get("error"), "error_code": task.get("error_code") or receipt["event"].get("error"),
+                "response_id": receipt["id"], "usage": deepcopy(run.get("usage", {}))}
+                for task, run, receipt in selected]
+            self.store.put_immutable("discovery_retry", {"id": retry_id, "campaign_id": campaign_id,
+                "session_id": session["id"], "created_at": timestamp, "reason": values.reason,
+                "previous_attempts": previous}, "discovery.retry_authorized")
+            for (task, run, receipt), old in zip(selected, previous):
+                task.update(status="queued", step=task["step"] + 1, wait_reason=None, retry_id=retry_id,
+                    retry_count=task.get("retry_count", 0) + 1, updated_at=timestamp)
+                if task["brief"]["role"] == "campaign_manager":
+                    # Re-read completed prerequisites at dispatch. Previous
+                    # attempts retain their exact frozen context and receipts.
+                    task["retry_context_step"] = task["step"]
+                for key in ("error", "error_code", "finished_at", "attempt_id"):
+                    task.pop(key, None)
+                run.update(status="waiting")
+                for key in ("error", "error_code", "finished_at"):
+                    run.pop(key, None)
+                self.store.put("discovery_task", task, "discovery.retry_queued")
+                self.store.put("research_run", run, "research.retry_queued")
+                if task.get("manager_command_id"):
+                    message = self.store.get(task["manager_command_id"], "manager_command")
+                    message.update(status="waiting_discovery" if session["status"] == "paused" else "admitted",
+                        wait_reason="Discovery is paused; resume it to process this request" if session["status"] == "paused" else None)
+                    message.pop("finished_at", None)
+                    self.store.put("manager_command", message, "discovery.message_retry_queued")
+                self.workspace.agent_log.record(campaign_id, "task.retry_queued", agent_id="researcher", role="researcher",
+                    task_id=task["id"], discovery_session_id=session["id"], event_key=retry_id + ":" + task["id"],
+                    summary=values.reason, payload={"retry_id": retry_id, "previous_attempt_id": old["attempt_id"]})
+            if session["status"] == "waiting_for_direction":
+                session["status"] = "running"
+            session.update(control_revision=session["control_revision"] + 1, updated_at=timestamp)
+            self.store.put("discovery_session", session, "discovery.retry_requested")
+            return {"session_id": session["id"], "session": session, "retry_id": retry_id, "task_ids": values.task_ids}
+
+    def supersede_task(self, request, arguments):
+        """Commit the manager's explicit retirement of a proven unsent assignment."""
+        from .tools import SupersedeTask
+        values = SupersedeTask.model_validate(arguments)
+        with self.workspace.lock, self.store.transaction():
+            identity = "resolution_" + request["id"]
+            request_hash = content_hash([request["task_id"], request["step_id"], values.model_dump(mode="json")])
+            try:
+                recorded = self.store.get(identity, "discovery_task_resolution")
+            except KeyError:
+                recorded = None
+            if recorded:
+                if recorded["request_hash"] != request_hash:
+                    raise ValueError("This task resolution already owns a different request")
+                return recorded["outcome"]
+            manager = self.store.get(request["task_id"], "discovery_task")
+            session = self.store.get(request["session_id"], "discovery_session")
+            campaign = self.store.get(request["campaign_id"], "campaign")
+            if manager["brief"]["role"] != "campaign_manager":
+                raise ValueError("Only the campaign manager may supersede an assignment")
+            if (manager["campaign_id"] != campaign["id"] or manager["session_id"] != session["id"] or
+                    session["campaign_id"] != campaign["id"]):
+                raise ValueError("Task resolution must belong to the manager's campaign and session")
+            if (session["status"] not in {"running", "waiting_for_provider"} or manager["status"] != "waiting" or
+                    manager.get("wait_reason") != "tools" or request["id"] not in manager.get("pending_tool_ids", [])):
+                raise ValueError("The manager must be awaiting this tool in an active discovery session")
+            guidance = self.workspace.memory.state(campaign["id"])["guidance_revision"]
+            if (request["guidance_revision"] != guidance or manager["guidance_revision"] != guidance or
+                    request["charter_version"] != campaign["version"] or session["charter_version"] != campaign["version"]):
+                raise ValueError("Campaign charter or guidance changed before task resolution")
+            target = self.store.get(values.task_id, "discovery_task")
+            replacement = self.store.get(values.replacement_task_id, "discovery_task")
+            if target["id"] in {replacement["id"], manager["id"]}:
+                raise ValueError("Choose a distinct obsolete task and replacement; the manager cannot supersede itself")
+            for row in (target, replacement):
+                if row["campaign_id"] != campaign["id"] or row["session_id"] != session["id"]:
+                    raise ValueError("Both assignments must belong to this session and its frozen problem")
+            if replacement["guidance_revision"] != guidance:
+                raise ValueError("The replacement must follow the current guidance")
+            if not target.get("parent_task_id") or self.store.get(target["parent_task_id"], "discovery_task")["brief"]["role"] != "campaign_manager":
+                raise ValueError("Only an assignment made by the campaign manager can be superseded")
+            if target["status"] != "queued" and not (target["status"] == "waiting" and target.get("wait_reason") in {"context_scope", "problem_scope"}):
+                raise ValueError("Only queued or context-blocked unsent assignments can be superseded")
+            if replacement["status"] in TASK_TERMINAL - {"completed"}:
+                raise ValueError("The replacement must remain actionable or have completed successfully")
+            pending, seen = list(replacement["dependencies"]), set()
+            while pending:
+                dependency = pending.pop()
+                if dependency == target["id"]:
+                    raise ValueError("The replacement cannot depend on the obsolete assignment")
+                if dependency not in seen:
+                    seen.add(dependency)
+                    pending.extend(self.store.get(dependency, "discovery_task")["dependencies"])
+            if any(row["id"] != target["id"] and target["id"] in row["dependencies"] and row["status"] not in TASK_TERMINAL
+                   for row in self.tasks(session)):
+                raise ValueError("An unfinished assignment still depends on this task; revise its dependency chain first")
+            run = self.store.get(target["run_id"], "research_run") if target.get("run_id") else None
+            workers = [self.threads.get(target["id"]), self.workspace.research_threads.get((run or {}).get("id"))]
+            if any(worker and worker.is_alive() for worker in workers):
+                raise ValueError("The obsolete assignment still has an active worker")
+            if (target.get("step", 0) or target.get("attempt_id") or target.get("applied_step_id") or target.get("artifact_ids") or
+                    run and (run.get("usage", {}).get("calls", 0) or run.get("usage", {}).get("pending_reservation"))):
+                raise ValueError("Superseding is limited to unsent assignments without provider usage or accepted work")
+            for kind in ("discovery_attempt", "discovery_response", "discovery_step", "discovery_artifact", "discovery_tool"):
+                if any(row.get("task_id") == target["id"] for row in self.store.list(kind, campaign["id"])):
+                    raise ValueError("The obsolete assignment already has an attempt, response, artifact or tool effect")
+            timestamp = now()
+            outcome = {"resolution_id": identity, "task_id": target["id"], "status": "superseded", "replacement_task_id": replacement["id"]}
+            self.store.put_immutable("discovery_task_resolution", {"id": identity, "campaign_id": campaign["id"],
+                "session_id": session["id"], "request_hash": request_hash, "tool_request_id": request["id"],
+                "manager_task_id": manager["id"], "manager_step_id": request["step_id"], "manager_attempt_id": manager.get("attempt_id"),
+                "task_id": target["id"], "replacement_task_id": replacement["id"], "reason": values.reason,
+                "previous_status": target["status"], "previous_error": target.get("error"), "created_at": timestamp,
+                "outcome": outcome}, "discovery.task_superseded")
+            target.update(status="superseded", wait_reason=None, finished_at=timestamp, updated_at=timestamp,
+                superseded_by_task_id=replacement["id"], resolution_id=identity, reason=values.reason)
+            self.store.put("discovery_task", target)
+            if run:
+                run.update(status="stopped", finished_at=timestamp, resolution_id=identity)
+                self.store.put("research_run", run, "research.assignment_superseded")
+            return outcome
+
     @staticmethod
     def _check_compute_policy(policy, campaign):
         if policy["experiment_compute_seconds"] > campaign["compute_budget_seconds"] - campaign["validation_reserve_seconds"]:
@@ -298,7 +511,7 @@ class DiscoveryController:
                 raise ValueError("Independent review can read only its assigned evidence and its own tool results")
         if task and task.get("context_group_id") and entry["kind"] == "hypothesis" and record.get("candidate_id"):
             self._evidence(session, record["candidate_id"], task=task)
-        if entry["kind"] in {"discovery_task", "discovery_artifact", "discovery_step", "discovery_tool_receipt", "discovery_candidate", "methodology_family", "discovery_assessment", "discovery_assessment_decision"}:
+        if entry["kind"] in {"discovery_task", "discovery_artifact", "discovery_step", "discovery_tool_receipt", "discovery_response", "discovery_rejected_response", "discovery_candidate", "methodology_family", "discovery_assessment", "discovery_assessment_decision"}:
             if record.get("session_id") != session["id"]:
                 raise ValueError("Reference earlier discovery evidence explicitly before reusing it")
             author = record["id"] if entry["kind"] == "discovery_task" else record.get("task_id")
@@ -332,7 +545,7 @@ class DiscoveryController:
             if row["task_id"] in task["dependencies"]:
                 receipts[row["id"]] = row
         reference_keys = {"source_id", "capture_id", "passage_ids", "retrieval_ids", "dossier_ids",
-                          "literature_map_ids", "parent_candidate_ids", "candidate_id", "artifact_id", "evidence_ids"}
+                          "literature_map_ids", "parent_candidate_ids", "parent_hypothesis_ids", "candidate_id", "artifact_id", "evidence_ids"}
         def references(value):
             if isinstance(value, dict):
                 for key, item in value.items():
@@ -361,6 +574,8 @@ class DiscoveryController:
                     receipts[identity] = record
             elif kind == "discovery_task":
                 pending.extend(record.get("artifact_ids", []))
+            elif kind == "hypothesis" and record.get("candidate_id"):
+                pending.append(record["candidate_id"])
             elif kind == "source_passage":
                 pending.extend([record["capture_id"], record["source_id"]])
                 for receipt in source_receipts:
@@ -372,8 +587,17 @@ class DiscoveryController:
                     if (receipt.get("result") or {}).get("capture", {}).get("id") == identity:
                         receipts[receipt["id"]] = receipt
             elif kind in {"discovery_artifact", "discovery_candidate"}:
-                pending.extend(references(record))
-                if kind == "discovery_artifact" and record.get("kind") == "candidate_batch":
+                if kind == "discovery_artifact" and record.get("kind") == "candidate_batch" and identity not in roots:
+                    # Retain the batch's shared scientific inputs without
+                    # following every sibling's references and ancestry.
+                    pending.extend(record.get("content", {}).get("dossier_ids", []))
+                    pending.extend(record.get("content", {}).get("literature_map_ids", []))
+                else:
+                    pending.extend(references(record))
+                if kind == "discovery_artifact" and record.get("kind") == "candidate_batch" and identity in roots:
+                    # A directly assigned batch means all its members. A
+                    # candidate's artifact_id is only its provenance backlink;
+                    # following it must not recursively admit unrelated siblings.
                     pending.extend(row["id"] for row in self.store.list("discovery_candidate", session["campaign_id"])
                                    if row["artifact_id"] == identity)
         return list(records.values()), list(receipts.values())
@@ -403,6 +627,7 @@ class DiscoveryController:
             "evidence": evidence, "retrieval_receipts": receipts,
             "artifact_index": [{key: row.get(key) for key in ("id", "kind", "title", "task_id", "stale")}
                                for row in evidence if self.store.get_entry(row["id"])["kind"] == "discovery_artifact"]}
+        context["discovery"]["researcher_request"] = proposals.request_context(self.store, task)
         context["manager_context"].pop("document", None)
         # The durable campaign memory remains on disk. A specialist's working
         # context contains the assigned evidence, not unrelated historical blobs.
@@ -444,6 +669,37 @@ class DiscoveryController:
         """Resume from actual task work; the starting scientific snapshot is fixed."""
         from optimization_framework.research.context import LIMIT, size
         context = deepcopy(run["context_snapshot"])
+        # Assigned records below carry complete proposal/measurement evidence.
+        # Remove redundant overview copies BEFORE deduplication, so no surviving
+        # reference points at text that was later dropped to meet the allowance.
+        assigned = {row.get("id") for row in context["discovery"].get("evidence", [])}
+        for key in ("hypotheses", "trials", "evidence_library"):
+            context[key] = [row for row in context.get(key, []) if row.get("id") not in assigned]
+        # Hypothesis cards project candidate descriptions under a different ID,
+        # so ordinary record-ID deduplication misses this exact duplication.
+        # Keep card-specific reviews, readiness and researcher edits; reference
+        # only equal fields whose complete candidate is supplied below.
+        candidate_evidence = {row["id"]: row for row in context["discovery"].get("evidence", [])
+                              if str(row.get("id", "")).startswith("candidate_") and row.get("mechanism")}
+        for hypothesis in context.get("hypotheses", []):
+            candidate = candidate_evidence.get(hypothesis.get("candidate_id"))
+            if not candidate:
+                continue
+            shared = [key for key in ("mechanism", "assumptions", "predictions", "cheapest_test", "implementation_needs", "algorithm_config")
+                      if key in hypothesis and key in candidate and hypothesis[key] == candidate[key]]
+            aliases = {key: source for key, source in {"rationale": "applicability", "risks": "failure_modes",
+                "protocol": "cheapest_test", "startup_cost": "startup_requirements"}.items()
+                if key in hypothesis and source in candidate and hypothesis[key] == candidate[source]}
+            if shared or aliases:
+                for key in [*shared, *aliases]:
+                    hypothesis.pop(key)
+                hypothesis["candidate_content_reference"] = {"candidate_id": candidate["id"], "fields": shared,
+                    "renamed_fields": aliases,
+                    "location": "The complete equal field values are supplied in discovery.evidence."}
+        context["available_methods"] = [{key: row[key] for key in
+            ("id", "name", "description", "representations", "constraints", "purpose") if key in row}
+            for row in context.get("available_methods", [])]
+        context["method_catalog_detail_tool"] = "Use implementation.inspect for exact bundled parameter schemas and published packages."
         # The Markdown projection duplicates structured memory. Keep the exact
         # frozen structured guidance, and reserve space for newly read evidence.
         if "manager_context" in context:
@@ -453,6 +709,22 @@ class DiscoveryController:
         # Keep a retrievable index; these are not this task's scientific evidence.
         context["applicable_assets"] = [{key: row[key] for key in ("id", "name", "title", "kind", "summary") if key in row}
                                          for row in context.get("applicable_assets", [])]
+        # Long campaigns accumulate many service-cost assets with identical
+        # catalog labels. Store those labels once without losing a single ID or
+        # changing the catalog metadata. Explicitly assigned assets stay separate.
+        asset_groups = {}
+        for row in context["applicable_assets"]:
+            if row.get("id") and row["id"] not in assigned:
+                metadata = {key: value for key, value in row.items() if key != "id"}
+                group = asset_groups.setdefault(content_hash(metadata), {"metadata": metadata, "record_ids": []})
+                group["record_ids"].append(row["id"])
+        grouped = [group for group in asset_groups.values() if len(group["record_ids"]) > 1]
+        if grouped:
+            grouped_ids = {identity for group in grouped for identity in group["record_ids"]}
+            context["applicable_assets"] = [row for row in context["applicable_assets"] if row.get("id") not in grouped_ids]
+            context["applicable_asset_groups"] = {"groups": grouped,
+                "record_projection": "Each exact record ID has the shared catalog metadata shown for its group. "
+                    "Use evidence.read with an exact record ID for the complete asset; no catalog entries were omitted."}
         context["history"] = context.get("history", [])[-6:]
         if task["brief"]["role"] != "campaign_manager":
             # Specialists reason from their declared evidence and current
@@ -470,12 +742,18 @@ class DiscoveryController:
             if indexed_task.get("brief"):
                 indexed_task["brief"] = {key: indexed_task["brief"][key] for key in
                     ("key", "role", "stage") if key in indexed_task["brief"]}
-        history = []
+        history, history_records = [], {}
         for row in self.store.list("discovery_step", task["campaign_id"]):
             if row["task_id"] == task["id"]:
                 history.append({"step_id": row["id"], "result": row["result"]})
+                history_records[row["id"]] = row
         receipts = [row for row in self.store.list("discovery_tool_receipt", task["campaign_id"]) if row["task_id"] == task["id"]]
         context["discovery"].update(step=task["step"], previous_work=history, tool_results=receipts)
+        if receipts:
+            context["discovery"]["tool_result_provenance"] = (
+                "Tool results are immutable snapshots at their created_at timestamps. "
+                "Use discovery.dependencies for the current assigned task states; older evidence.read replies "
+                "may show failures that were subsequently retried. Preserve that history without treating an old failure as the current state.")
         context["discovery"]["retrieval_receipt_ids"] = list(dict.fromkeys(
             row["id"] for row in [*context["discovery"].get("retrieval_receipts", []), *receipts]
             if row.get("tool", "").startswith("source.")))
@@ -484,11 +762,17 @@ class DiscoveryController:
             context["discovery"]["completion_reminder"] = "Your prior response already delivered work products. Finish THIS task with disposition=complete (campaign session_action=continue) so the manager can advance. Repeating the same analysis is not further progress."
         context["discovery"]["validation_feedback"] = [row for row in self.store.list("discovery_feedback", task["campaign_id"])
                                                        if row["task_id"] == task["id"]]
+        context["discovery"]["rejected_responses"] = [{"response_id": row["response_id"], "output": row["output"]}
+            for row in self.store.list("discovery_rejected_response", task["campaign_id"]) if row["task_id"] == task["id"]][-2:]
         # Trial records contain deployment manifests and full candidate archives.
         # Supply exact scientific settings/measurements, retaining the complete
         # immutable record and trajectory behind experiment.inspect. Deduplicate
         # repeated source text, never substituting an ID for the only supplied text.
         seen_passages, seen_receipts, seen_records = set(), set(), set()
+        candidate_records = {}
+        for row in context["discovery"].get("evidence", []):
+            if str(row.get("id", "")).startswith("candidate_") and row.get("artifact_id") and row.get("mechanism"):
+                candidate_records.setdefault(row["artifact_id"], {})[row["key"]] = row
         trial_fields = {"id", "campaign_id", "task_id", "algorithm", "algorithm_config", "seed", "status",
             "max_steps", "wall_seconds", "schedule_steps", "training", "problem", "question", "hypothesis_id",
             "study_id", "confirmatory", "charter_version", "implementation_version_id", "builtin_implementation_id",
@@ -509,9 +793,18 @@ class DiscoveryController:
                     return {"id": value["id"], "capture_id": value["capture_id"], "text_supplied_elsewhere_in_context": True}
                 seen_passages.add(key)
             if "request_id" in value and "tool" in value and "result" in value:
-                if value["id"] in seen_receipts:
+                receipt_key = (value["id"], content_hash(value["result"]))
+                if receipt_key in seen_receipts:
                     return {key: value.get(key) for key in ("id", "request_id", "tool", "status", "error")} | {"result_supplied_elsewhere_in_context": True}
-                seen_receipts.add(value["id"])
+                seen_receipts.add(receipt_key)
+            if value.get("kind") == "candidate_batch" and value.get("id") in candidate_records:
+                rows = value.get("content", {}).get("candidates", [])
+                supplied = candidate_records[value["id"]]
+                complete = {row.get("id") for row in full_context["discovery"].get("evidence", []) if row.get("mechanism")}
+                if rows and all(row["key"] in supplied and supplied[row["key"]]["id"] in complete for row in rows):
+                    value = {**value, "content": {**value["content"], "candidates": [
+                        {"candidate_id": supplied[row["key"]]["id"], "key": row["key"], "title": row["title"],
+                         "content_supplied_separately": True} for row in rows]}}
             if str(value.get("id", "")).startswith("discovery_task_") and "brief" in value:
                 value = {key: item for key, item in value.items() if key in
                          {"id", "brief", "status", "artifact_ids", "applied_step_id", "error", "result"}}
@@ -529,8 +822,57 @@ class DiscoveryController:
                         value[key] = result
                 value["record_projection"] = "Exact settings and measurements; deployment metadata and candidate archive omitted. Use experiment.inspect with this ID for full record and trajectory."
             return {key: compact(item) for key, item in value.items()}
-        context = compact(context)
-        receipts = context["discovery"]["tool_results"]
+        full_context = context
+        context = compact(full_context)
+        if size(context) > LIMIT:
+            from .working_context import provenance_view
+            full_context = provenance_view(full_context, task)
+            seen_passages.clear(); seen_receipts.clear(); seen_records.clear()
+            context = compact(full_context)
+        if size(context) > LIMIT:
+            # Retrieval provenance does not require replaying every passage from
+            # every earlier fetch. Assigned passages remain full evidence records;
+            # other text stays available through the immutable receipt. Recompile
+            # from the pre-deduplication snapshot to avoid dangling text references.
+            for receipt in full_context["discovery"].get("retrieval_receipts", []):
+                body = receipt.get("result") or {}
+                receipt["result"] = {"retrieval_id": body.get("retrieval_id"),
+                    "capture_id": body.get("capture", {}).get("id"),
+                    "passage_ids": [row["id"] for row in body.get("passages", [])],
+                    "content_omitted": "Use evidence.read with this receipt ID for the full saved retrieval."}
+            seen_passages.clear(); seen_receipts.clear(); seen_records.clear()
+            context = compact(full_context)
+        if size(context) > LIMIT and task["brief"]["role"] == "campaign_manager":
+            # The manager can assign work from the dossiers and candidate records.
+            # Indirect raw measurements and document bodies are retrievable detail;
+            # explicitly assigned records and current tool replies remain intact.
+            roots = set(task["brief"]["evidence_ids"])
+            for dependency in full_context["discovery"].get("dependencies", []):
+                roots.update(dependency.get("artifact_ids") or [])
+            evidence = []
+            for row in full_context["discovery"].get("evidence", []):
+                try:
+                    kind = self.store.get_entry(row["id"])["kind"]
+                except KeyError:
+                    kind = None
+                if row.get("id") not in roots and kind in {"trial", "source_capture", "source_passage", "source_retrieval", "discovery_tool_receipt"}:
+                    row = {key: row[key] for key in ("id", "kind", "title", "source_id", "capture_id", "tool", "status", "error") if key in row} | {
+                        "content_omitted": "Indirect evidence; use evidence.read with this ID before making detailed claims."}
+                evidence.append(row)
+            full_context["discovery"]["evidence"] = evidence
+            seen_passages.clear(); seen_receipts.clear(); seen_records.clear()
+            context = compact(full_context)
+        if size(context) > LIMIT and history:
+            # Prior artifacts and tool arguments have durable records of their
+            # own. Do not replay their complete bodies in every continuation.
+            full_context["discovery"]["previous_work"] = [{"step_id": row["step_id"],
+                "result": {key: row["result"][key] for key in ("summary", "dissent", "questions_for_manager", "disposition") if key in row["result"]},
+                "artifact_ids": [identity for identity in task.get("artifact_ids", []) if identity.startswith(row["step_id"] + "_artifact_")],
+                "record_projection": "Prior work summary; use evidence.read with step_id for the complete saved result, including rationale and tool requests."}
+                for row in history]
+            seen_passages.clear(); seen_receipts.clear(); seen_records.clear()
+            context = compact(full_context)
+        receipts = full_context["discovery"]["tool_results"]
         # Older large tool bodies stay retrievable by their immutable IDs. Never
         # truncate the current request's results or the original authority.
         for row in receipts:
@@ -538,12 +880,119 @@ class DiscoveryController:
                 break
             if row.get("request_id") and row["request_id"] not in task.get("last_tool_ids", []):
                 row["result"] = {"omitted_from_context": True, "retrieve_record_id": row["id"]}
+                # Rebuild all references: an older body may have contained the
+                # first copy of a passage also present in the current replies.
+                seen_passages.clear(); seen_receipts.clear(); seen_records.clear()
+                context = compact(full_context)
         if size(context) > LIMIT:
-            records = context.get("manager_context", {}).get("retrieved_records", [])
-            context["manager_context"]["retrieved_records"] = [
+            # A tool can return a large legacy receipt, or several pages at once.
+            # Keep immutable receipts complete in storage and supply explicit
+            # replayable field/page views, never hard-truncated scientific text.
+            from .record_view import view_record
+            base = deepcopy(full_context)
+            collections = ("tool_results", "previous_work", "rejected_responses")
+            items = []
+            for row in receipts:
+                items.append(("tool_results", self.store.get(row["id"], "discovery_tool_receipt"), row["id"]))
+            for row in history:
+                items.append(("previous_work", history_records[row["step_id"]], row["step_id"]))
+            for row in full_context["discovery"].get("rejected_responses", []):
+                items.append(("rejected_responses", self.store.get(row["response_id"], "discovery_response"), row["response_id"]))
+            for key in collections:
+                base["discovery"][key] = []
+            seen_passages.clear(); seen_receipts.clear(); seen_records.clear()
+            allowance = min(24 * 1024, max(1024, (LIMIT - size(compact(base)) - 12 * 1024) // max(1, len(items))))
+            if items:
+                while True:
+                    for key in collections:
+                        full_context["discovery"][key] = []
+                    for key, record, identity in items:
+                        view = view_record(record, record_id=identity, max_bytes=allowance)
+                        if key == "previous_work":
+                            view = {"step_id": identity, "saved_step": view}
+                        elif key == "rejected_responses":
+                            view = {"response_id": identity, "saved_response": view}
+                        full_context["discovery"][key].append(view)
+                    seen_passages.clear(); seen_receipts.clear(); seen_records.clear()
+                    context = compact(full_context)
+                    if size(context) <= LIMIT - 10 * 1024 or allowance <= 1024:
+                        break
+                    allowance = max(1024, allowance // 2)
+        if size(context) > LIMIT:
+            records = full_context.get("manager_context", {}).get("retrieved_records", [])
+            full_context["manager_context"]["retrieved_records"] = [
                 {key: row[key] for key in ("id", "kind", "title", "classification", "evidence_ids") if key in row}
                 | {"content_omitted": "Use evidence.read with the record ID; original frozen scope and current tool results are preserved."}
                 for row in records]
+            seen_passages.clear(); seen_receipts.clear(); seen_records.clear()
+            context = compact(full_context)
+        # Leave a usable next-read window. A nearly-full context that can only
+        # index each new reply is a dead end even though it technically fits.
+        # Last resort: page a saved scientific body explicitly; never page the
+        # campaign authority, task brief, current guidance, or incoming tool page.
+        if size(context) > LIMIT - 10 * 1024:
+            from .record_view import view_record
+            evidence = full_context["discovery"].get("evidence", [])
+            for position in sorted(range(len(evidence)), key=lambda i: size(evidence[i]), reverse=True):
+                if size(context) <= LIMIT - 10 * 1024:
+                    break
+                row = evidence[position]
+                try:
+                    entry = self.store.get_entry(row["id"])
+                    if entry["kind"] not in {"discovery_artifact", "discovery_candidate", "source_capture", "source_passage", "discovery_tool_receipt"}:
+                        continue
+                    original = self.store.get(row["id"], entry["kind"])
+                except KeyError:
+                    continue
+                page = view_record(original, record_id=row["id"], max_bytes=4096)
+                if not page.get("record_projection"):
+                    continue
+                projected = {key: row[key] for key in ("id", "kind", "title", "task_id", "candidate_id", "artifact_id",
+                    "parent_candidate_ids", "parent_hypothesis_ids") if key in row}
+                projected.update(saved_record=page, content_omitted="Assigned scientific body is explicitly paged to leave room for a useful read. "
+                    "Use evidence.read with its record ID and field pointers; the omitted content has not been supplied in this call.")
+                evidence[position] = projected
+                seen_passages.clear(); seen_receipts.clear(); seen_records.clear()
+                smaller = compact(full_context)
+                if size(smaller) >= size(context):
+                    evidence[position] = row
+                    continue
+                context = smaller
+                for hypothesis in full_context.get("hypotheses", []):
+                    if hypothesis.get("candidate_content_reference", {}).get("candidate_id") == row["id"]:
+                        hypothesis["candidate_content_reference"]["location"] = "Candidate body is paged; use evidence.read for these fields before relying on them."
+                    for review in hypothesis.get("reviews", []):
+                        if review.get("id") == row["id"] and review.pop("full_review_supplied_in_evidence", False):
+                            review["full_review_read_required"] = True
+                seen_passages.clear(); seen_receipts.clear(); seen_records.clear()
+                context = compact(full_context)
+        # Paging a large assigned body may have freed space after a conservative
+        # receipt budget was calculated. Restore useful current replies whenever
+        # they now fit, so a requested small page cannot get stuck as an index.
+        for position, view in enumerate(full_context["discovery"].get("tool_results", [])):
+            identity = view.get("id") or view.get("record_id")
+            if not identity:
+                continue
+            try:
+                receipt = self.store.get(identity, "discovery_tool_receipt")
+            except KeyError:
+                continue
+            if receipt.get("request_id") not in task.get("last_tool_ids", []) or receipt == view:
+                continue
+            full_context["discovery"]["tool_results"][position] = receipt
+            seen_passages.clear(); seen_receipts.clear(); seen_records.clear()
+            restored = compact(full_context)
+            if size(restored) <= LIMIT - 10 * 1024:
+                context = restored
+            else:
+                full_context["discovery"]["tool_results"][position] = view
+        if size(context) > LIMIT - 10 * 1024:
+            raise ValueError("Task context exceeds the bounded allowance with usable read headroom; split the task or request smaller passage batches")
+        context["discovery"]["bounded_read_guidance"] = {
+            "max_bytes": min(24 * 1024, max(1024, LIMIT - size(context) - 2048)),
+            "instruction": "For omitted fields use evidence.read with the exact record ID, supplied JSON pointer and this max_bytes cap. "
+                "Read the needed fields in separate steps. For source citations read the complete source_passage record with evidence.read "
+                "or source.read: id, capture_id and full text must be supplied together. A /text field read, index or text chunk alone is not a citable passage."}
         if size(context) > LIMIT:
             raise ValueError("Task context exceeds the bounded allowance; split the task or request smaller passage batches")
         return context
@@ -586,8 +1035,15 @@ class DiscoveryController:
                     objective="Reconsider the agenda against the new campaign guidance. Retain completed evidence and assign revised next work.")],
                     batch_id=f"guidance_{revision}")
         for message in pending:
+            request = message["request"]
+            evidence = list(request.get("parent_hypothesis_ids", []))
+            if request.get("hypothesis_id"):
+                evidence.append(request["hypothesis_id"])
+            if request.get("proposal_operation") == "expand":
+                evidence.extend(row["id"] for row in self.store.list("hypothesis", campaign_id))
             tasks = self.add_tasks(session, [DiscoveryTaskBrief(key="researcher_message", role="campaign_manager", stage="manage",
-                objective=message["request"]["message"], persona="Respond to the researcher's latest request while preserving the campaign's scientific history.")],
+                objective=request["message"], evidence_ids=list(dict.fromkeys(evidence))[-100:],
+                persona="Respond to the researcher's latest request while preserving the campaign's scientific history.")],
                 batch_id=message["id"])
             task = tasks[0]
             task["manager_command_id"] = message["id"]
@@ -601,6 +1057,11 @@ class DiscoveryController:
 
     def _advance_agenda(self, session):
         """Only new completed evidence wakes the manager, never polling alone."""
+        tasks = self.tasks(session)
+        try:
+            proposals.schedule_reviews(self, session, tasks)
+        except ValueError as exc:
+            self.workspace.memory.issue(session["campaign_id"], "discovery_review_allocation", str(exc), affected=session["id"])
         tasks = self.tasks(session)
         if any(row["brief"]["role"] == "campaign_manager" and row["status"] not in TASK_TERMINAL for row in tasks):
             return
@@ -637,19 +1098,25 @@ class DiscoveryController:
         with self.workspace.lock, self.store.transaction():
             self._advance_agenda(session)
         config = provider_status()
-        if not config["configured"]:
-            if session["status"] != "waiting_for_provider":
-                session.update(status="waiting_for_provider", updated_at=now())
-                self.store.put("discovery_session", session, "discovery.waiting_provider")
-            self.workspace.memory.issue(campaign_id, "discovery_provider", "Discovery needs an enabled model. The agenda is saved; no curated proposals were substituted.", affected=session["id"])
-            return
-        if session["status"] == "waiting_for_provider":
-            session.update(status="running", updated_at=now())
-            self.store.put("discovery_session", session, "discovery.provider_available")
-            for issue in self.store.list("manager_issue", campaign_id):
-                if issue["code"] == "discovery_provider" and issue["status"] == "pending" and issue.get("affected") == session["id"]:
-                    issue.update(status="resolved", revision=issue["revision"] + 1, resolved_at=now(), resolution_basis="provider_configuration_available")
-                    self.store.put("manager_issue", issue, "discovery.provider_issue_resolved")
+        with self.workspace.lock, self.store.transaction():
+            # Availability never overrides a researcher control committed while
+            # this tick was checking the provider or awaiting the lock.
+            session = self.store.get(session["id"], "discovery_session")
+            if session["status"] not in {"running", "waiting_for_provider"}:
+                return
+            if not config["configured"]:
+                if session["status"] != "waiting_for_provider":
+                    session.update(status="waiting_for_provider", updated_at=now())
+                    self.store.put("discovery_session", session, "discovery.waiting_provider")
+                self.workspace.memory.issue(campaign_id, "discovery_provider", "Discovery needs an enabled model. The agenda is saved; no curated proposals were substituted.", affected=session["id"])
+                return
+            if session["status"] == "waiting_for_provider":
+                session.update(status="running", updated_at=now())
+                self.store.put("discovery_session", session, "discovery.provider_available")
+                for issue in self.store.list("manager_issue", campaign_id):
+                    if issue["code"] == "discovery_provider" and issue["status"] == "pending" and issue.get("affected") == session["id"]:
+                        issue.update(status="resolved", revision=issue["revision"] + 1, resolved_at=now(), resolution_basis="provider_configuration_available")
+                        self.store.put("manager_issue", issue, "discovery.provider_issue_resolved")
         tasks = self.tasks(session)
         live = [task for task in tasks if self.threads.get(task["id"]) and self.threads[task["id"]].is_alive()]
         room = session["policy"]["max_concurrent_tasks"] - len(live)
@@ -658,14 +1125,38 @@ class DiscoveryController:
                 break
             if task["status"] != "queued" or any(row["id"] == task["id"] for row in live):
                 continue
-            dependencies = [self.store.get(key, "discovery_task") for key in task["dependencies"]]
-            if any(row["status"] not in TASK_TERMINAL for row in dependencies):
-                continue
-            if task["brief"]["role"] == "campaign_manager" and any(row["brief"]["role"] == "campaign_manager" for row in live):
-                continue
             with self.workspace.lock, self.store.transaction():
+                # The queue snapshot is only a scheduling hint. A manager tool
+                # or researcher control may have retired this assignment while
+                # this tick was waiting to acquire the lock.
+                session = self.store.get(session["id"], "discovery_session")
+                if session["status"] != "running" or self.workspace.shutdown_event.is_set():
+                    break
+                task = self.store.get(task["id"], "discovery_task")
+                if task["status"] != "queued":
+                    continue
+                dependencies = [self.store.get(key, "discovery_task") for key in task["dependencies"]]
+                if any(row["status"] not in TASK_TERMINAL for row in dependencies):
+                    continue
+                if task["brief"]["role"] != "campaign_manager" and any(row["status"] != "completed" for row in dependencies):
+                    task.update(status="blocked", finished_at=now(), error="A prerequisite did not complete. The campaign manager must revise this assignment.")
+                    self.store.put("discovery_task", task, "discovery.prerequisite_failed")
+                    continue
+                active = [row for row in self.tasks(session) if row["status"] == "running"]
+                if len(active) >= session["policy"]["max_concurrent_tasks"]:
+                    break
+                if task["brief"]["role"] == "campaign_manager" and any(row["brief"]["role"] == "campaign_manager" for row in active):
+                    continue
                 if task.get("run_id"):
                     run = self.store.get(task["run_id"], "research_run")
+                    if task.get("retry_context_step") == task["step"]:
+                        try:
+                            run["context_snapshot"] = self._context(session, task)
+                        except ValueError as exc:
+                            task.update(status="waiting", wait_reason="context_scope", error=str(exc))
+                            self.store.put("discovery_task", task, "discovery.context_blocked")
+                            self.workspace.memory.issue(campaign_id, "discovery_scope", str(exc), affected=session["id"])
+                            continue
                     run.update(status="running", cost_work_revision=task["step"] + 1)
                     run.pop("finished_at", None)
                     self.store.put("research_run", run, "research.continued")
@@ -704,8 +1195,15 @@ class DiscoveryController:
                 try:
                     self.store.get(attempt_id, "discovery_attempt")
                 except KeyError:
+                    # Freeze routing with this attempt, before starting its worker.
+                    # Continuing tasks pick up a saved policy at the next step.
+                    current_session = self.store.get(session["id"], "discovery_session")
+                    attempt_config = self.workspace.models.config(campaign_id, task["brief"]["role"],
+                        base=config, legacy_roles=current_session["policy"].get("role_models", {}))
+                    model_record = self.workspace.models.record(campaign_id)
                     self.store.put_immutable("discovery_attempt", {"id": attempt_id, "campaign_id": campaign_id,
                         "session_id": session["id"], "task_id": task["id"], "step": task["step"],
+                        "provider_snapshot": attempt_config, "model_policy_revision": model_record["revision"] if model_record else 0,
                         "created_at": now(), "context_snapshot": context, "context_hash": content_hash(context)}, "discovery.attempt_created")
                 task.update(status="running", run_id=run["id"], attempt_id=attempt_id)
                 self.store.put("discovery_task", task, "discovery.task_started")
@@ -752,11 +1250,13 @@ class DiscoveryController:
         task = self.store.get(task_id, "discovery_task")
         session = self.store.get(task["session_id"], "discovery_session")
         run = self.store.get(task["run_id"], "research_run")
-        config = deepcopy(run["request"]["provider_snapshot"])
-        override = session["policy"]["role_models"].get(task["brief"]["role"], {})
-        if override.get("model") and override["model"] != config["model"] and config["billing_mode"] != "subscription":
-            config["pricing_known"] = all(override.get(key) is not None for key in ("input_usd_per_million", "output_usd_per_million"))
-        config.update({key: value for key, value in override.items() if key != "schema_version" and value is not None})
+        attempt = self.store.get(task["attempt_id"], "discovery_attempt")
+        if "provider_snapshot" in attempt:
+            config = deepcopy(attempt["provider_snapshot"])
+        else:
+            # Older attempts retain their original run/session routing.
+            from optimization_framework.research.model_policy import apply_binding
+            config = apply_binding(run["request"]["provider_snapshot"], session["policy"]["role_models"].get(task["brief"]["role"], {}))
         adapter = None
         try:
             adapter = self.adapter_factory(max_calls=session["policy"]["max_calls_per_task"], max_output_tokens=session["policy"]["max_output_tokens"],
@@ -784,12 +1284,25 @@ class DiscoveryController:
                 except KeyError:
                     saved_step = None
                 uncertain = bool(run.get("usage", {}).get("pending_reservation") and not usage.get("calls", 0) == 0)
+                from pydantic import ValidationError
+                schema_error = exc if isinstance(exc, ValidationError) else exc.__cause__
+                if not saved_step and not uncertain and isinstance(schema_error, ValidationError):
+                    receipts = [row for row in self.store.list("discovery_response", task["campaign_id"])
+                        if row["task_id"] == task_id and row["step"] == task["step"] and row["event"]["type"] == "provider_response"]
+                    if receipts:
+                        self._reject_response(task, run, session, receipts[-1], schema_error)
+                        return
                 # Transport exceptions can contain URLs, credentials or source
-                # bodies. Only framework budget/cancellation errors are public.
+                # bodies. CodexProviderError is explicitly safe to display;
+                # other transport exceptions remain generic.
                 from optimization_framework.research.coordinator import ResearchCancelled
-                detail = str(exc) if isinstance(exc, (BudgetUnavailable, ResearchCancelled)) else "Task output or execution failed; inspect the saved ordinary response and tool receipts"
+                from optimization_framework.research.codex_provider import CodexProviderError
+                detail = str(exc) if isinstance(exc, (BudgetUnavailable, ResearchCancelled, CodexProviderError)) else "Task output or execution failed; inspect the saved ordinary response and tool receipts"
                 run.update(usage=usage, status="needs_reconciliation" if uncertain else "failed", error=f"{type(exc).__name__}: {detail}", finished_at=now())
-                task.update(status="waiting" if uncertain else "failed", wait_reason="uncertain_provider" if uncertain else None, error=run["error"])
+                task.update(status="waiting" if uncertain else "failed", wait_reason="uncertain_provider" if uncertain else None,
+                            error=run["error"], finished_at=run["finished_at"])
+                if isinstance(exc, CodexProviderError):
+                    run["error_code"] = task["error_code"] = exc.code
                 current_session = self.store.get(task["session_id"], "discovery_session")
                 if isinstance(exc, ResearchCancelled) and not uncertain:
                     stale = run["guidance_revision"] != self.workspace.memory.state(task["campaign_id"])["guidance_revision"]
@@ -805,6 +1318,8 @@ class DiscoveryController:
                 if uncertain:
                     from optimization_framework.research.lifecycle import reconciliation
                     reconciliation(self.workspace, run)
+                if task["status"] not in TASK_TERMINAL:
+                    task.pop("finished_at", None)
                 self.store.put("research_run", run, "research.interrupted" if uncertain else "research.failed")
                 self.store.put("discovery_task", task, "discovery.task_failed")
                 if not isinstance(exc, ResearchCancelled):
@@ -814,6 +1329,15 @@ class DiscoveryController:
                 self.workspace.manager.capture_costs(self.store.get(task["run_id"], "research_run"))
             except Exception:
                 self.workspace.memory.issue(task["campaign_id"], "model_cost_capture", "Discovery model costs need reconciliation", affected=task["run_id"])
+
+    def _reject_response(self, task, run, session, receipt, error):
+        """A received but malformed envelope gets bounded correction, with its cost retained."""
+        rejected = self.store.put_immutable("discovery_rejected_response", {
+            "id": f"{task['id']}_step_{task['step']}_rejected", "campaign_id": task["campaign_id"],
+            "session_id": session["id"], "task_id": task["id"], "response_id": receipt["id"],
+            "created_at": receipt["created_at"], "output": receipt["event"].get("output"),
+            "usage": receipt["event"]["usage"]}, "discovery.response_rejected")
+        self._reject_result(task, run, session, rejected, error)
 
     def _reject_result(self, task, run, session, step, error):
         from pydantic import ValidationError
@@ -835,6 +1359,10 @@ class DiscoveryController:
         allowed &= run["charter_version"] == self.store.get(task["campaign_id"], "campaign")["version"]
         task.update(status="queued" if allowed else "failed", wait_reason=None, corrections=corrections,
                     step=task["step"] + 1, error="Result validation: " + details)
+        if allowed:
+            task.pop("finished_at", None)
+        else:
+            task["finished_at"] = now()
         run.update(status="waiting" if allowed else "failed", usage=step["usage"], error=task["error"])
         self.store.put("discovery_task", task, "discovery.correction_queued" if allowed else "discovery.task_failed")
         self.store.put("research_run", run, "research.result_rejected")
@@ -890,6 +1418,7 @@ class DiscoveryController:
                         "stale": stale, "created_at": step["created_at"], **artifact.model_dump(mode="json"), "content": content}, "discovery.artifact_created")
                 if not cancelled:
                     knowledge.project_candidates(self, session, task, item)
+                    proposals.project_review(self, item)
                 task["artifact_ids"] = list(dict.fromkeys([*task.get("artifact_ids", []), identity]))
             self.store.put("discovery_task", task, "discovery.artifacts_saved")
 
@@ -969,13 +1498,25 @@ class DiscoveryController:
         # Context compilation sends no model request. Reconsider a saved context
         # wait after upgrading the compiler, retaining all original usage/history.
         for task in self.store.list("discovery_task"):
-            if task.get("wait_reason") != "context_scope":
+            if task["status"] in TASK_TERMINAL or task.get("wait_reason") != "context_scope":
                 continue
             try:
                 run = self.store.get(task.get("run_id", "research_" + task["id"]), "research_run")
             except KeyError:
                 continue
             try:
+                # A manager that never dispatched can safely refresh obsolete
+                # task states (for example an explicitly retired assignment).
+                # Any dispatched attempt keeps its original scientific snapshot.
+                usage = run.get("usage") or {}
+                if (task["brief"]["role"] == "campaign_manager" and task.get("step", 0) == 0
+                        and not task.get("attempt_id") and usage.get("calls", 0) == 0 and not usage.get("pending_reservation")):
+                    session = self.store.get(task["session_id"], "discovery_session")
+                    campaign = self.store.get(task["campaign_id"], "campaign")
+                    guidance = self.workspace.memory.state(task["campaign_id"])["guidance_revision"]
+                    if (run.get("charter_version") == session["charter_version"] == campaign["version"]
+                            and run.get("guidance_revision") == session["guidance_revision"] == guidance):
+                        run["context_snapshot"] = self._context(session, task)
                 self._step_context(task, run)
             except ValueError:
                 continue
@@ -1006,7 +1547,13 @@ class DiscoveryController:
                             step = self.store.put_immutable("discovery_step", {"id": f"{task['id']}_step_{task['step']}",
                                 "campaign_id": task["campaign_id"], "session_id": task["session_id"], "task_id": task["id"],
                                 "result": parsed.model_dump(mode="json"), "usage": receipt["event"]["usage"], "created_at": receipt["created_at"]})
-                        except (ValueError, TypeError):
+                        except (ValueError, TypeError) as exc:
+                            from pydantic import ValidationError
+                            if isinstance(exc, ValidationError):
+                                run = self.store.get(task["run_id"], "research_run")
+                                session = self.store.get(task["session_id"], "discovery_session")
+                                self._reject_response(task, run, session, receipt, exc)
+                                continue
                             task.update(status="failed", wait_reason=None, error="The saved provider response is not a valid discovery result; it was not retried")
                             self.store.put("discovery_task", task, "discovery.task_failed")
                             run = self.store.get(task["run_id"], "research_run")
@@ -1024,7 +1571,19 @@ class DiscoveryController:
                 run = self.store.get(task["run_id"], "research_run")
                 previous = [row for row in self.store.list("discovery_step", task["campaign_id"]) if row["task_id"] == task["id"]]
                 completed_calls = max((row["usage"].get("calls", 0) for row in previous), default=0)
-                if not run.get("usage", {}).get("pending_reservation") and run.get("usage", {}).get("calls", 0) == completed_calls:
+                received = False
+                if task.get("retry_id"):
+                    retry = self.store.get(task["retry_id"], "discovery_retry")
+                    authorized = next((row for row in retry["previous_attempts"]
+                        if row["task_id"] == task["id"] and row["step"] + 1 == task["step"]), None)
+                    received = any(row["task_id"] == task["id"] and row["step"] == task["step"]
+                        for row in self.store.list("discovery_response", task["campaign_id"]))
+                    if authorized and not received:
+                        # A crash before the retry's first reservation must not
+                        # mistake retained usage from its old timeout for a new
+                        # uncertain call. The authorization freezes that baseline.
+                        completed_calls = max(completed_calls, authorized["usage"].get("calls", 0))
+                if not received and not run.get("usage", {}).get("pending_reservation") and run.get("usage", {}).get("calls", 0) == completed_calls:
                     task["status"] = "queued"
                 else:
                     task.update(status="waiting", wait_reason="provider_receipt_reconciliation")
@@ -1044,7 +1603,9 @@ class DiscoveryController:
                 "steps": self.store.list("discovery_step", campaign_id),
                 "tool_receipts": self.store.list("discovery_tool_receipt", campaign_id),
                 "feedback": self.store.list("discovery_feedback", campaign_id),
-                "tools": self.store.list("discovery_tool", campaign_id)}
+                "tools": self.store.list("discovery_tool", campaign_id),
+                "retries": self.store.list("discovery_retry", campaign_id),
+                "task_resolutions": self.store.list("discovery_task_resolution", campaign_id)}
 
     def project_pending(self):
         """Readable durable research history, separate from the raw debug stream."""
@@ -1066,8 +1627,8 @@ class DiscoveryController:
             write(root / "revisions" / (digest + ".json"), document + "\n")
             write(root / "context.json", document + "\n")
             records = [(kind, row) for kind in ("discovery_session", "discovery_task", "discovery_attempt", "discovery_step", "discovery_artifact",
-                       "discovery_tool", "discovery_tool_receipt", "discovery_feedback", "discovery_context", "discovery_candidate", "methodology_family",
-                       "discovery_policy", "discovery_assessment", "discovery_assessment_decision", "source_capture", "source_passage")
+                       "discovery_tool", "discovery_tool_receipt", "discovery_feedback", "discovery_rejected_response", "discovery_context", "discovery_candidate", "methodology_family",
+                       "discovery_policy", "discovery_retry", "discovery_task_resolution", "discovery_assessment", "discovery_assessment_decision", "source_capture", "source_passage")
                        for row in self.store.list(kind, campaign_id)]
             write(root / "records.jsonl", "".join(json.dumps({"kind": kind, "record": row}, ensure_ascii=False) + "\n" for kind, row in records))
             lines = ["# Discovery agenda", "", "Canonical structured records are in context.json and records.jsonl.", ""]

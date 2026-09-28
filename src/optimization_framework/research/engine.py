@@ -239,6 +239,8 @@ class LLMAdapter:
                  budget_usd: float | None = None, usage: dict | None = None,
                  reservation_callback: Callable[[dict], None] | None = None, config: dict | None = None):
         self.config = copy.deepcopy(config) if config is not None else provider_status()
+        self.model_policy = self.config.pop("model_policy", None)
+        self.base_config = copy.deepcopy(self.config)
         self.max_calls = max(0, min(int(max_calls), 20))
         self.max_output_tokens = max(128, min(int(max_output_tokens), 8192))
         self.budget_usd = budget_usd
@@ -307,6 +309,10 @@ class LLMAdapter:
 
     def call_with_prompt(self, role, system, content, *, result_type=RoleResult):
         """Use the common accounted transport for a separately versioned protocol."""
+        from optimization_framework.research.model_policy import resolve_policy
+        # Each role starts from the accepted provider snapshot. A previous
+        # specialist's override must never become the next role's fallback.
+        self.config = resolve_policy(self.base_config, self.model_policy, role)
         if not self.config["configured"]:
             raise BudgetUnavailable("No configured LLM provider; research is waiting for configuration.")
         if self.usage["calls"] >= self.max_calls:
@@ -330,14 +336,23 @@ class LLMAdapter:
             if self.usage["reserved_cost_usd"] + reserved > self.budget_usd:
                 raise BudgetUnavailable("The next role cannot fit within the remaining LLM spending cap.")
         previous_usage = copy.deepcopy(self.usage)
+        if not self.usage["calls"]:
+            self.usage["cost_usd"] = 0.0 if self.config["pricing_known"] else None
+            self.usage["pricing_known"] = self.config["pricing_known"]
+        elif not self.config["pricing_known"]:
+            self.usage["cost_usd"] = None
+            self.usage["pricing_known"] = False
+        self._record_model()
         self.usage["calls"] += 1
         self.usage["input_tokens"] += input_reservation
         self.usage["output_tokens"] += self.max_output_tokens
         if reserved is not None:
             self.usage["reserved_cost_usd"] += reserved
-            self.usage["cost_usd"] += reserved
-            self.usage["api_cost_usd"] = self.usage["cost_usd"]
+            if self.usage["cost_usd"] is not None:
+                self.usage["cost_usd"] += reserved
+            self.usage["api_cost_usd"] = self.usage.get("api_cost_usd", 0.0) + reserved
         reservation = {"id": _identifier("llm_reservation"), "role": role,
+                       "model": self.config["model"], "reasoning_effort": self.config.get("reasoning_effort"),
                        "input_tokens_reserved": input_reservation,
                        "output_tokens_reserved": self.max_output_tokens, "cost_usd_reserved": reserved}
         self.usage["pending_reservation"] = reservation
@@ -399,9 +414,10 @@ class LLMAdapter:
             if reserved is not None:
                 actual = (input_tokens * self.config["input_usd_per_million"] +
                           output_tokens * self.config["output_usd_per_million"]) / 1_000_000
-                self.usage["cost_usd"] += actual - reserved
+                if self.usage["cost_usd"] is not None:
+                    self.usage["cost_usd"] += actual - reserved
                 self.usage["reserved_cost_usd"] += actual - reserved
-                self.usage["api_cost_usd"] = self.usage["cost_usd"]
+                self.usage["api_cost_usd"] += actual - reserved
             self.usage.pop("pending_reservation", None)
         else:
             self._reserve_unknown()
@@ -432,6 +448,10 @@ class LLMAdapter:
         self.usage["token_accounting"] = "contains_conservative_reservations; actual usage unknown"
         if self.config["pricing_known"]:
             self.usage["cost_accounting"] = "contains_conservative_reservations; actual charge unknown"
+
+    def _record_model(self):
+        self.usage["model"] = self.config["model"]
+        self.usage["models"] = list(dict.fromkeys([*self.usage.get("models", []), self.config["model"]]))
 
     def _request_event(self, role, call_id, system, content):
         if self.reservation_callback:
@@ -471,7 +491,9 @@ class LLMAdapter:
         from optimization_framework.research.codex_provider import CodexProviderError, run_codex
 
         previous = copy.deepcopy(self.usage)
+        self._record_model()
         reservation = {"id": _identifier("codex_reservation"), "role": role,
+                       "model": self.config["model"], "reasoning_effort": self.config.get("reasoning_effort"),
                        "billing_mode": "subscription", "cost_usd_reserved": None}
         self.usage.update(calls=self.usage["calls"] + 1,
                           subscription_calls=self.usage.get("subscription_calls", 0) + 1,
@@ -499,10 +521,26 @@ class LLMAdapter:
                 pass
             raise
         call_started = time.monotonic()
+        timeout = None
         try:
+            try:
+                configured_timeout = float(self.config.get("timeout_seconds", 120))
+                deadline = self.config.get("deadline_monotonic")
+                remaining = float(deadline) - call_started if deadline is not None else None
+            except (TypeError, ValueError, OverflowError):
+                raise CodexProviderError("Invalid Codex runtime or deadline.", code="invalid_config") from None
+            if not math.isfinite(configured_timeout) or not 0 < configured_timeout <= 3600 or (
+                remaining is not None and not math.isfinite(remaining)
+            ):
+                raise CodexProviderError("Invalid Codex runtime or deadline.", code="invalid_config")
+            if remaining is not None and remaining <= 0:
+                raise CodexProviderError("The task deadline expired before Codex could start; no model call was sent.", code="timeout")
+            # Discovery has no implementation compute deadline. In that case
+            # honor the configured call limit instead of inventing a 120s one.
+            timeout = min(configured_timeout, remaining) if remaining is not None else configured_timeout
             response = run_codex(system, content, result_type.model_json_schema(),
                 {**self.config, "max_output_tokens": self.max_output_tokens,
-                 "timeout_seconds": min(self.config.get("timeout_seconds", 120), max(.1, self.config.get("deadline_monotonic", time.monotonic()+120) - time.monotonic()))},
+                 "timeout_seconds": timeout},
                 on_progress=lambda event: emit({"type": "provider_progress", "role": role, "reservation_id": reservation["id"],
                                                 "stage": event.get("stage"), "elapsed_seconds": event.get("elapsed_seconds")}))
         except CodexProviderError as exc:
@@ -511,7 +549,8 @@ class LLMAdapter:
             else:
                 self.usage.pop("pending_reservation", None)
                 self.usage["token_accounting"] = "contains_unknown_subscription_usage"
-            self._response_event(role, reservation["id"], error=exc.code)
+            self._response_event(role, reservation["id"], error=exc.code, error_message=str(exc),
+                timeout_seconds=timeout, elapsed_seconds=time.monotonic() - call_started)
             raise
         except BaseException:
             # Cancellation can arrive during inference. Retain uncertain usage
@@ -777,7 +816,7 @@ def run_research(request: dict, context: dict, emit: Callable[[dict], None] | No
         return result
     adapter = LLMAdapter(max_calls=request.get("max_calls", 8), max_output_tokens=request.get("max_output_tokens", 1800),
                          budget_usd=request.get("llm_budget_usd"), usage=resume.get("usage") if resume else None,
-                         reservation_callback=emit, config=config)
+                         reservation_callback=emit, config={**config, "model_policy": request.get("model_policy")})
     state: ResearchState = copy.deepcopy(resume) if resume else {
         "queue": _initial_roles(request.get("mode", "discuss"), context), "completed": [], "role_results": [],
         "hypotheses": [], "actions": [], "decisions": _slow_start_decisions(context), "trace": [],
@@ -828,7 +867,8 @@ def run_research(request: dict, context: dict, emit: Callable[[dict], None] | No
             updated["role_results"].append({"role": role, **answer.model_dump()})
             updated["trace"].append({"role": role, "status": "completed", "content": answer.analysis,
                                      "dissent": answer.dissent, "provider": config["provider"],
-                                     "model": config["model"], "billing_mode": config["billing_mode"]})
+                                     "model": adapter.config["model"], "reasoning_effort": adapter.config.get("reasoning_effort"),
+                                     "billing_mode": config["billing_mode"]})
             all_ids = existing_ids | {h["id"] for h in updated["hypotheses"]}
             for proposal in answer.hypotheses:
                 card = proposal.model_dump()

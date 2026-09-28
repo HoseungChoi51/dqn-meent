@@ -24,7 +24,7 @@ export function DiscoveryDialogue({ view, sessionId, sources }: { view: Json; se
   const latest = new Map<string, string>(allSteps.map((step: Json) => [step.task_id, step.id]));
   const steps = showEarlier ? allSteps : allSteps.filter((step: Json) => latest.get(step.task_id) === step.id);
   const saved = (view.artifacts || []).filter((item: Json) => item.session_id === sessionId && !item.stale);
-  const outputs = saved.filter((item: Json) => ['literature_map', 'candidate_batch', 'review', 'synthesis'].includes(item.kind));
+  const outputs = saved.filter((item: Json) => ['literature_map', 'candidate_batch', 'proposal_review', 'review', 'synthesis'].includes(item.kind));
   return <section className="discovery-dialogue" aria-label="Scientific dialogue">
     <h3>Scientific dialogue</h3>
     <p>Actual agent reports in completion order. Open the work products and tool evidence to follow the argument. Exact requests and ordinary responses are retained in Agent log.</p>

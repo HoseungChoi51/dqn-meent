@@ -50,24 +50,38 @@ class DiscoveryAmend(Contract):
     reason: str = Field(min_length=1, max_length=5000)
 
 
+class DiscoveryRetry(Contract):
+    session_id: str
+    expected_control_revision: int = Field(ge=0)
+    task_ids: list[str] = Field(min_length=1, max_length=30)
+    reason: str = Field(min_length=1, max_length=5000)
+
+    @model_validator(mode="after")
+    def unique_tasks(self):
+        if len(self.task_ids) != len(set(self.task_ids)):
+            raise ValueError("Choose each failed task only once")
+        return self
+
+
 class DiscoveryTaskBrief(Contract):
     key: str = Field(min_length=1, max_length=100, pattern=r"^[a-zA-Z0-9_-]+$")
     role: str = Field(min_length=1, max_length=100, pattern=r"^[a-zA-Z0-9_-]+$")
     objective: str = Field(min_length=1, max_length=12000)
     persona: str = Field(default="", max_length=12000)
     stage: Literal["analyze", "study", "generate", "critique", "assess", "evaluate", "review", "synthesize", "manage"] = "analyze"
-    dependencies: list[str] = Field(default_factory=list, max_length=30)
+    dependencies: list[str] = Field(default_factory=list, max_length=30,
+        description="Task IDs or task keys to wait for. Put already saved artifact IDs in evidence_ids.")
     evidence_ids: list[str] = Field(default_factory=list, max_length=100)
 
 
 class DiscoveryToolCall(Contract):
     key: str = Field(min_length=1, max_length=100, pattern=r"^[a-zA-Z0-9_-]+$")
-    tool: Literal["source.search", "source.ingest", "source.read", "evidence.read", "implementation.inspect", "experiment.inspect", "assessment.inspect", "assessment.prepare", "assessment.launch", "assessment.wait"]
+    tool: Literal["source.search", "source.ingest", "source.read", "evidence.read", "implementation.inspect", "experiment.inspect", "assessment.inspect", "assessment.prepare", "assessment.launch", "assessment.wait", "task.supersede"]
     arguments: dict[str, Any] = Field(default_factory=dict)
 
 
 class DiscoveryArtifact(Contract):
-    kind: Literal["problem_dossier", "literature_map", "candidate_batch", "assessment_plan", "evaluation", "review", "synthesis"]
+    kind: Literal["problem_dossier", "literature_map", "candidate_batch", "proposal_review", "assessment_plan", "evaluation", "review", "synthesis"]
     title: str = Field(min_length=1, max_length=500)
     content: dict[str, Any]
     evidence_ids: list[str] = Field(default_factory=list, max_length=100)

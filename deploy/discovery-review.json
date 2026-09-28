@@ -7,5 +7,6 @@
   "workers": 2,
   "provider": "codex",
   "model": "gpt-6-luna",
+  "codex_timeout_seconds": 600,
   "llm_enabled": true
 }

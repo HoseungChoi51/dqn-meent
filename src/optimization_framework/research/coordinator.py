@@ -85,6 +85,17 @@ class ResearchCoordinator:
     def validate_request(self, request):
         """Validate admission without allocating a turn or executing a provider."""
         self.store.get(request.campaign_id, "campaign")
+        if request.proposal_operation:
+            discovery = getattr(self.workspace, "discovery", None)
+            session = discovery.active(request.campaign_id) if discovery else None
+            if not session:
+                raise ValueError("Start an optimizer discovery session in Research notebook before requesting new proposals")
+            for identity in request.parent_hypothesis_ids:
+                parent = self.store.get(identity, "hypothesis")
+                if parent["campaign_id"] != request.campaign_id or parent.get("status") == "archived":
+                    raise ValueError("Select active parent proposals from this campaign")
+                if parent.get("candidate_id"):
+                    discovery._evidence(session, parent["candidate_id"])
         target = self.store.get(request.hypothesis_id, "hypothesis") if request.hypothesis_id else None
         if target and target["campaign_id"] != request.campaign_id:
             raise ValueError("The selected idea must belong to this campaign")
@@ -135,6 +146,7 @@ class ResearchCoordinator:
             payload = request.model_dump()
             payload["llm_budget_usd"] = remaining
             payload["provider_snapshot"] = provider_status()
+            payload["model_policy"] = self.workspace.models.snapshot(request.campaign_id)
             record = {"id": identifier("research"), "campaign_id": request.campaign_id,
                       "charter_version": campaign["version"], "request": payload, "context_snapshot": context,
                       "status": "running", "created_at": now(), "trace": [], "usage": {},

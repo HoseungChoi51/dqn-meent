@@ -208,15 +208,20 @@ class ImplementationBridge:
             self.workspace.check_manager_context(campaign_id, expected_context)
             campaign = self.store.get(campaign_id, "campaign")
             identity = "grant_" + digest([self.workspace_id, idempotency_key])[:24]
-            request = JobRequest(workspace_id=self.workspace_id, campaign_id=campaign_id, hypothesis_id=hypothesis_id,
-                grant_id=identity, idempotency_key=idempotency_key, spec=spec, package=package,
-                compute_seconds=compute_seconds, max_calls=max_calls, api_budget_usd=api_budget_usd).model_dump()
-            if (request["spec"].get("kind") == "evaluator") != (task_id is not None):
-                raise ValueError("Commission this executable against the matching optimizer or evaluator requirement")
             try:
                 grant = self.store.get(identity, "implementation_grant")
             except KeyError:
                 grant = None
+            # A retry delivers its accepted grant, even if the researcher has
+            # since selected different models for newly commissioned work.
+            model_policy = (grant["request"].get("model_policy") if grant else
+                            self.workspace.models.snapshot(campaign_id))
+            request = JobRequest(workspace_id=self.workspace_id, campaign_id=campaign_id, hypothesis_id=hypothesis_id,
+                grant_id=identity, idempotency_key=idempotency_key, spec=spec, package=package,
+                compute_seconds=compute_seconds, max_calls=max_calls, api_budget_usd=api_budget_usd,
+                model_policy=model_policy).model_dump()
+            if (request["spec"].get("kind") == "evaluator") != (task_id is not None):
+                raise ValueError("Commission this executable against the matching optimizer or evaluator requirement")
             if grant:
                 if grant["request"] != request or grant.get("task_id") != task_id:
                     raise ValueError("This request identity already refers to different implementation work")

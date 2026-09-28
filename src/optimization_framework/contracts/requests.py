@@ -197,5 +197,20 @@ class ResearchInput(Model):
     mode: Literal["discuss", "generate", "review", "compare", "evolve", "probe", "plan"] = "discuss"
     hypothesis_id: str | None = None
     feedback_review_ids: list[str] = Field(default_factory=list, max_length=100)
+    proposal_operation: Literal["expand", "diversify", "hybrid"] | None = None
+    parent_hypothesis_ids: list[str] = Field(default_factory=list, max_length=2)
+    proposal_count: int = Field(default=3, ge=1, le=6)
     max_calls: int = Field(default=6, ge=1, le=20)
     max_output_tokens: int = Field(default=2048, ge=256, le=8192)
+
+    @model_validator(mode="after")
+    def proposal_parents(self):
+        if self.proposal_operation:
+            required = {"expand": 0, "diversify": 1, "hybrid": 2}[self.proposal_operation]
+            if self.mode != "generate" or self.hypothesis_id or self.feedback_review_ids:
+                raise ValueError("Proposal exploration uses generate mode and explicit parent_hypothesis_ids")
+            if len(set(self.parent_hypothesis_ids)) != required or len(self.parent_hypothesis_ids) != required:
+                raise ValueError(f"{self.proposal_operation} requires {required} distinct parent proposals")
+        elif self.parent_hypothesis_ids:
+            raise ValueError("Parent proposals require a proposal operation")
+        return self

@@ -64,6 +64,8 @@ class Workspace:
         self.source_threads = {}
         self.on_trial_finished = None
         self._lease = None
+        from optimization_framework.research.model_policy import CampaignModels
+        self.models = CampaignModels(self)
         from optimization_framework.campaigns.memory import CampaignMemory
         from optimization_framework.implementations.bridge import ImplementationBridge
         self.memory = CampaignMemory(self)
@@ -441,6 +443,11 @@ class Workspace:
         with self.lock, self.store.transaction():
             self.check_manager_context(request.campaign_id, expected_context)
             campaign = self.store.get(request.campaign_id, "campaign")
+            if request.hypothesis_id and validation is None:
+                from optimization_framework.research.discovery.proposals import readiness as proposal_readiness
+                review = proposal_readiness(self.store, self.store.get(request.hypothesis_id, "hypothesis"))
+                if not review["eligible"]:
+                    raise ValueError(review["reason"])
             task = self.evaluators.task_view(self.store.get(request.task_id, "task"))
             execution = dict(execution or {})
             if validation and validation.get("parent_trial_id"):

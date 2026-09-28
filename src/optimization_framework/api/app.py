@@ -117,6 +117,15 @@ def create_app(directory=None, max_workers=2, start_workers=True, implementation
         workspace.store.get(campaign_id, "campaign")
         return workspace.discovery.view(campaign_id)
 
+    @app.get("/api/campaigns/{campaign_id}/models")
+    def campaign_models(campaign_id: str):
+        return workspace.models.view(campaign_id)
+
+    @app.get("/api/campaigns/{campaign_id}/research-progress")
+    def research_progress(campaign_id: str):
+        from optimization_framework.research.progress import view
+        return view(workspace, campaign_id)
+
     @app.get("/api/campaigns/{campaign_id}/discovery/assessments/{assessment_id}")
     def discovery_assessment(campaign_id: str, assessment_id: str):
         record = workspace.store.get(assessment_id, "discovery_assessment")
@@ -359,10 +368,12 @@ def create_app(directory=None, max_workers=2, start_workers=True, implementation
         # Read the cursor before projecting state: a concurrent event then
         # appears on the next refresh instead of being skipped by a stale view.
         recent_events = workspace.store.recent_events(current) if current else []
-        provider = provider_status()
+        provider = workspace.models.config(current, "campaign_manager") if current else provider_status()
         response = {"workspace_id": workspace_id, "campaigns": campaigns, "campaign": campaign, "algorithms": ALGORITHMS,
                     "settings": {"llm_configured": provider["configured"], "model": provider["model"],
                                  "provider": provider, "max_workers": workspace.max_workers}}
+        if current:
+            response["settings"]["model_policy"] = workspace.models.view(current)
         for kind, name in (("task", "tasks"), ("hypothesis", "hypotheses"), ("trial", "trials"),
                            ("decision", "decisions"), ("message", "messages"), ("action", "actions"),
                            ("source", "sources")):
@@ -373,9 +384,13 @@ def create_app(directory=None, max_workers=2, start_workers=True, implementation
             if kind == "trial":
                 rows = [public_trial(r) for r in rows]
             if kind == "hypothesis":
-                rows = [{**h, "implementation_readiness": workspace.implementations.readiness(h)} for h in rows]
+                from optimization_framework.research.discovery.proposals import readiness as proposal_readiness
+                rows = [{**h, "implementation_readiness": workspace.implementations.readiness(h),
+                         "concept_review": proposal_readiness(workspace.store, h)} for h in rows]
             response[name] = rows
         response["research_runs"] = [coordinator.public_run(r) for r in workspace.store.list("research_run", current)] if current else []
+        from optimization_framework.research.progress import view as progress_view
+        response["research_progress"] = progress_view(workspace, current) if current else None
         response["source_requests"] = [{key: effect[key] for key in
             ("id", "kind", "status", "query", "identifier", "error", "receipt_id", "created_at") if key in effect}
             for effect in workspace.store.list("outbox", current) if effect["kind"] in {"literature_search", "source_ingest"}] if current else []

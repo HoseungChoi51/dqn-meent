@@ -60,6 +60,9 @@ def configuration(path, no_llm=False):
         raise LauncherError("llm_enabled must be a boolean and workers a positive integer.")
     if config.get("provider") not in {"codex", "openai_api", "compatible"} or not config.get("model"):
         raise LauncherError("Choose a supported provider and a nonempty model.")
+    if "codex_timeout_seconds" in config and (type(config["codex_timeout_seconds"]) not in {int, float}
+            or not 5 <= config["codex_timeout_seconds"] <= 600):
+        raise LauncherError("codex_timeout_seconds must be between 5 and 600 seconds.")
     if no_llm:
         config["llm_enabled"] = False
     return config
@@ -169,6 +172,8 @@ def service_environment(config):
                GRATING_IMPLEMENTATIONS_URL=f"http://127.0.0.1:{config['implementation_port']}",
                GRATING_IMPLEMENTATIONS_TOKEN_FILE=str(Path(config["directory"]) / "library/service.token"),
                PYTHONUNBUFFERED="1")
+    if "codex_timeout_seconds" in config:
+        env["GRATING_CODEX_TIMEOUT_SECONDS"] = str(config["codex_timeout_seconds"])
     # The token file must identify this library, even if another service's token
     # happens to be present in the calling shell.
     env.pop("GRATING_IMPLEMENTATIONS_TOKEN", None)

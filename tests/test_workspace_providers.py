@@ -151,6 +151,64 @@ def test_subscription_cancellation_before_send_releases_durable_call_reservation
     assert events[-1]["type"] == "provider_call_cancelled_before_send"
 
 
+@pytest.mark.parametrize("configured,deadline,expected", [
+    (180, None, 180),
+    (600, None, 600),
+    (600, 1045, 45),
+    (180, 1600, 180),
+])
+def test_codex_honors_configured_timeout_and_actual_task_deadline(monkeypatch, configured, deadline, expected):
+    calls = enable_codex(monkeypatch)
+    monkeypatch.setenv("GRATING_CODEX_TIMEOUT_SECONDS", str(configured))
+    monkeypatch.setattr(research.time, "monotonic", lambda: 1000)
+    config = providers.provider_status()
+    if deadline is not None:
+        config["deadline_monotonic"] = deadline
+    adapter = research.LLMAdapter(config=config)
+    adapter.call("research_synthesizer", {})
+    assert len(calls) == 1
+    assert calls[0]["config"]["timeout_seconds"] == expected
+
+
+def test_expired_task_deadline_prevents_model_call_and_releases_reservation(monkeypatch):
+    calls = enable_codex(monkeypatch)
+    monkeypatch.setattr(research.time, "monotonic", lambda: 1000)
+    events = []
+    adapter = research.LLMAdapter(config={**providers.provider_status(), "deadline_monotonic": 999},
+                                  reservation_callback=events.append)
+    with pytest.raises(codex_provider.CodexProviderError, match="deadline expired") as raised:
+        adapter.call("research_synthesizer", {})
+    assert raised.value.code == "timeout"
+    assert calls == []
+    assert adapter.usage["calls"] == adapter.usage["subscription_calls"] == 0
+    assert "pending_reservation" not in adapter.usage
+    assert events[-1]["type"] == "provider_error"
+    assert "no model call was sent" in events[-1]["error_message"]
+
+
+def test_codex_failure_receipt_preserves_safe_message_and_effective_time_limit(monkeypatch):
+    def fail(call):
+        raise codex_provider.CodexProviderError(
+            "Codex inference exceeded its 600.0-second time limit; no fallback was used.",
+            code="timeout", usage_unknown=True)
+
+    calls = enable_codex(monkeypatch, fail)
+    monkeypatch.setenv("GRATING_CODEX_TIMEOUT_SECONDS", "600")
+    events = []
+    adapter = research.LLMAdapter(reservation_callback=events.append)
+    with pytest.raises(codex_provider.CodexProviderError):
+        adapter.call("campaign_manager", {})
+    assert len(calls) == 1, "Timeouts must not silently retry or change providers."
+    error = events[-1]
+    assert error["type"] == "provider_error"
+    assert error["error"] == "timeout"
+    assert error["error_message"] == "Codex inference exceeded its 600.0-second time limit; no fallback was used."
+    assert error["timeout_seconds"] == 600
+    assert error["elapsed_seconds"] >= 0
+    assert adapter.usage["subscription_calls"] == 1
+    assert "pending_reservation" not in adapter.usage
+
+
 def test_interrupted_subscription_request_cannot_be_automatically_replayed(monkeypatch):
     def interrupt(call):
         raise ResearchCancelled()

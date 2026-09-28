@@ -114,6 +114,19 @@ def campaign_input(name):
             "tasks": [{"name": "Quadratic", "problem_id": "bounded_continuous", "configuration": {}}]}
 
 
+def test_explicit_codex_timeout_survives_launcher_environment(setup, monkeypatch):
+    config, path, _, _, _ = setup
+    monkeypatch.setenv("GRATING_CODEX_TIMEOUT_SECONDS", "120")
+    config["codex_timeout_seconds"] = 600
+    path.write_text(json.dumps(config))
+    actual = launcher.configuration(path)
+    assert launcher.service_environment(actual)["GRATING_CODEX_TIMEOUT_SECONDS"] == "600"
+    for invalid in (0, 601, True, "600", float("inf")):
+        path.write_text(json.dumps({**config, "codex_timeout_seconds": invalid}))
+        with pytest.raises(launcher.LauncherError, match="codex_timeout_seconds"):
+            launcher.configuration(path)
+
+
 def test_real_services_restart_keep_campaign_and_only_remove_their_route(setup):
     config, path, runtime, ts_path, run = setup
     original_routes = json.loads(ts_path.read_text())

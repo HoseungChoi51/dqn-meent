@@ -81,6 +81,10 @@ class DraftService:
             block("evaluator_" + evaluator["state"], evaluator["reason"],
                 *( ["review_validation", "record_waiver"] if evaluator.get("waiver_allowed") else ["commission_evaluator", "select_evaluator"]))
         hypothesis = self.store.get(request["hypothesis_id"], "hypothesis") if request.get("hypothesis_id") else None
+        from optimization_framework.research.discovery.proposals import readiness as proposal_readiness
+        concept_review = proposal_readiness(self.store, hypothesis)
+        if not concept_review["eligible"]:
+            block("concept_review_required", concept_review["reason"], "discuss_with_manager")
         if draft["follow_proposal_implementation"]:
             if hypothesis.get("implementation_version_id"):
                 request.update(algorithm="package", implementation_version_id=hypothesis["implementation_version_id"])
@@ -149,6 +153,7 @@ class DraftService:
             binding = None
         basis = {"draft_revision_id": draft["revision_id"], "study_id": study["id"], "problem": task["problem"],
                  "resolved_procedure": request, "implementation": implementation, "evaluator": evaluator, "blockers": blockers,
+                 "concept_review": concept_review,
                  "reproduction": reproduction,
                  "input_digests": {asset["id"]: asset["content_hash"] for asset in assets}}
         return {"draft_id": draft_id, "revision": draft["revision"], "ready": not blockers,

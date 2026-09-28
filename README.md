@@ -27,6 +27,10 @@ Open **http://127.0.0.1:8765**. Create a campaign, define development configurat
 
 The [implementation evidence map](docs/implementation-status.md) connects the [research-system plan](docs/agentic-algorithm-discovery-plan.md) to code, tests, and unverified research outcomes.
 
+The [proposal exploration guide](docs/proposal-exploration.md) covers additional ideas, diversification, two-parent hybrids, independent conceptual review, and implementation requests. A [recorded Luna hybrid review](docs/grating-hybrid-review.md) shows the generated mechanism and the reviewer's concrete objections.
+
+The [model control panel](docs/model-control-panel.md) configures campaign defaults and per-role model/reasoning settings, including the separate implementation service.
+
 For the original single-run numerical interface:
 
 ```bash

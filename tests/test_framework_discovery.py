@@ -243,6 +243,43 @@ def test_large_experiment_records_preserve_measurements_and_one_copy_of_source_t
         assert "archive" in original["result"] and "execution_manifest" in original
 
 
+def test_large_historical_receipt_can_be_indexed_without_losing_assigned_passages(setup):
+    from optimization_framework.research.context import LIMIT, size
+    from optimization_framework.research.discovery.knowledge import supplied_passages
+    workspace, campaign = setup
+    session, _ = start(workspace, campaign)
+    task = workspace.discovery.tasks(session)[0]
+    context = workspace.discovery._context(session, task)
+    passage = {"id": "assigned_passage", "capture_id": "capture", "text": "Assigned scientific support"}
+    context["discovery"]["evidence"] = [deepcopy(passage)]
+    context["discovery"]["retrieval_receipts"] = [{"id": "receipt", "tool": "source.read", "request_id": "fetch",
+        "status": "completed", "result": {"capture": {"id": "capture"}, "passages": [deepcopy(passage),
+            {"id": "unassigned_passage", "capture_id": "capture", "text": "x" * LIMIT}]}}]
+    compiled = workspace.discovery._step_context(task, {"context_snapshot": context})
+    assert size(compiled) < LIMIT
+    assert list(supplied_passages(compiled)) == list(supplied_passages(passage))
+    assert compiled["discovery"]["retrieval_receipts"][0]["result"]["passage_ids"] == ["assigned_passage", "unassigned_passage"]
+    assert context["discovery"]["retrieval_receipts"][0]["result"]["passages"][1]["text"] == "x" * LIMIT
+
+
+def test_manager_indexes_indirect_detail_but_never_drops_explicit_evidence(setup):
+    from optimization_framework.research.context import LIMIT, size
+    workspace, campaign = setup
+    session, _ = start(workspace, campaign)
+    task = next(row for row in workspace.discovery.tasks(session) if row["brief"]["role"] == "campaign_manager")
+    trial = {"id": "trial_large_detail", "campaign_id": campaign["id"], "task_id": session["problem_task_id"],
+             "algorithm": "coordinate", "result": {"large_diagnostic": "x" * LIMIT}}
+    workspace.store.put("trial", trial)
+    context = {"discovery": {"evidence": [trial], "dependencies": []}, "manager_context": {}}
+    compiled = workspace.discovery._step_context(task, {"context_snapshot": context})
+    assert size(compiled) < LIMIT
+    assert compiled["discovery"]["evidence"][0]["id"] == trial["id"]
+    assert "content_omitted" in compiled["discovery"]["evidence"][0]
+    task["brief"]["evidence_ids"] = [trial["id"]]
+    with pytest.raises(ValueError, match="bounded allowance"):
+        workspace.discovery._step_context(task, {"context_snapshot": context})
+
+
 def test_saved_step_applies_without_repeating_inference(setup, monkeypatch):
     workspace, campaign = setup
     session, _ = start(workspace, campaign, max_concurrent_tasks=1)

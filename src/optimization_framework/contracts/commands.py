@@ -8,7 +8,7 @@ from .requests import CampaignUpdate, ControlInput, ValidationInput, ReviewInput
 from optimization_framework.implementations.models import EvaluatorSpec, EvaluatorPackage, EvaluatorCheckSpec, OptimizerCheckSpec
 
 Operation = Literal["campaign.create", "campaign.update", "context.edit", "issue.resolve", "trial.create", "trial.control", "trial.validate", "draft.save", "draft.launch", "reproduction.draft", "reproduction.compare", "study.create", "study.nominate", "study.freeze_template", "study.activate", "validation.run", "validation.require", "validation.execute", "validation.waive",
-    "discovery.start", "discovery.control", "discovery.amend", "discovery.assessment.save", "discovery.assessment.launch", "discovery.assessment.decide",
+    "models.configure", "discovery.start", "discovery.control", "discovery.amend", "discovery.retry", "discovery.assessment.save", "discovery.assessment.launch", "discovery.assessment.decide",
     "validation.revoke_waiver", "context.import", "inference.run", "asset.reuse", "asset.import_reference_set", "cost.reconcile", "comparison.report", "finding.record", "implementation.commission",
     "implementation.attach", "evaluator.commission", "evaluator.attach", "implementation.control", "implementation.revalidate", "implementation.reuse", "implementation.resolve_runtime", "bundle.export", "bundle.inspect", "bundle.publish", "research.start", "research.control", "decision.resolve", "source.record", "source.ingest", "hypothesis.create", "hypothesis.review", "hypothesis.status", "hypothesis.nominate", "literature.search", "confirmation.schedule", "confirmation.validate", "confirmation.release"]
 

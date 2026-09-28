@@ -53,6 +53,8 @@ export function ImplementationRequest({ hypothesis, state, onClose, onDone }: { 
   }, [taskId]);
   const evaluatorReady = !task?.evaluator_manifest || !!task.evaluator_readiness?.runnable || !!task.evaluator_readiness?.mandatory_contract_validated;
   const budget = state.budget || {};
+  const remainingCompute = Math.max(0, (state.campaign?.implementation_compute_budget_seconds || 0) - (budget.implementation_compute_committed_seconds || 0));
+  const allocationFits = Number(compute) > 0 && Number(compute) <= remainingCompute;
   async function submit(e: React.FormEvent) {
     e.preventDefault(); setBusy(true); setError('');
     try {
@@ -81,6 +83,7 @@ export function ImplementationRequest({ hypothesis, state, onClose, onDone }: { 
       <h3>{hypothesis.title}</h3>
       <p className="help-text">Implementation validation checks correctness and reproducibility. Experiments will measure performance separately.</p>
       <div className="callout">Implementation compute: {seconds(budget.implementation_compute_committed_seconds || 0)} allocated or used / {seconds(state.campaign?.implementation_compute_budget_seconds || 0)} cap. Revise the charter to assign or increase this separate allocation.</div>
+      {!allocationFits && <div className="callout amber"><p>This request exceeds the remaining implementation allocation ({seconds(remainingCompute)}). Assign implementation compute in the campaign charter first.</p><button type="button" className="text-button" onClick={() => { onClose(); window.location.hash = 'problem'; }}>Open problem workbench to revise charter</button></div>}
       <div className="form-grid">
         <Field wide label="Optimizer validation problem"><select required value={taskId} onChange={e => setTaskId(e.target.value)}>
           {!tasks.length && <option value="">No development problem available</option>}{tasks.map(item => <option key={item.id} value={item.id}>{item.name}</option>)}</select></Field>
@@ -104,7 +107,7 @@ export function ImplementationRequest({ hypothesis, state, onClose, onDone }: { 
       <details><summary>Import an existing package instead of building the first candidate</summary><Field wide label="Package JSON" hint={'{"entrypoint":"optimizer:create_optimizer","files":[{"path":"optimizer.py","content":"..."}]}'}><textarea className="code-input" rows={7} value={sourcePackage} onChange={e => setSourcePackage(e.target.value)} spellCheck={false} /></Field></details>
       <p className="help-text">Up to three candidates can be built and repaired within this allocation. Questions and unresolved failures return to the campaign manager.</p>
       <ErrorNotice text={error} />
-      <div className="modal-actions"><button className="button secondary" type="button" onClick={onClose}>Cancel</button><button className="button primary" disabled={busy || !task || !evaluatorReady}>{busy ? 'Commissioning…' : 'Commission implementation'}</button></div>
+      <div className="modal-actions"><button className="button secondary" type="button" onClick={onClose}>Cancel</button><button className="button primary" disabled={busy || !task || !evaluatorReady || !allocationFits}>{busy ? 'Commissioning…' : 'Commission implementation'}</button></div>
     </form>
   </Modal>;
 }
@@ -191,6 +194,10 @@ export function ImplementationLibrary({ state, refresh, discuss }: { state: Stat
   const [error, setError] = useState(''), [busy, setBusy] = useState(''), [target, setTarget] = useState('');
   const [taskId, setTaskId] = useState(''), [rationale, setRationale] = useState('');
   const [revalidation, setRevalidation] = useState<Json | null>(null);
+  const [search, setSearch] = useState('');
+  const matches = (text: string) => text.toLowerCase().includes(search.trim().toLowerCase());
+  const versions = (catalog.versions || []).filter((v: Json) => matches(`${v.name} ${v.id} ${v.spec.mechanism}`));
+  const bundled = state.algorithms.filter(a => matches(`${a.name} ${a.id} ${a.description}`));
   const command = useCommand(state.campaign);
   const tasks = state.tasks.filter(task => task.evaluator_requirement_id);
   async function reload() { try { const query = new URLSearchParams();
@@ -215,6 +222,9 @@ export function ImplementationLibrary({ state, refresh, discuss }: { state: Stat
     <div className="page-heading"><div><span className="eyebrow">Executable library</span><h1>Build, validate, and reuse.</h1><p>Inspect optimizer and evaluator versions and the evidence supporting their declared uses.</p></div>
       <button className="button secondary" onClick={() => void reload()}>Refresh library</button></div>
     <ErrorNotice text={error} />
+    <Field label="Search installed implementations"><input aria-label="Search installed implementations" value={search} onChange={e => setSearch(e.target.value)} placeholder="Name, mechanism, or implementation ID" /></Field>
+    <p className="help-text">Search covers bundled optimizers and this service's published packages. External source can be imported through Request implementation and passes the same correctness checks.</p>
+    {!!bundled.length && <Panel title="Bundled optimizers"><div className="run-list">{bundled.map(method => <article key={method.id}><h3>{method.name}</h3><p>{method.description}</p><p className="help-text">Identifier: {method.id}. Check that the proposal's mechanism and parameters match before selecting it in a revised proposal.</p><details><summary>Supported parameters</summary><pre>{JSON.stringify((method as Json).parameter_schema || method.parameters || {}, null, 2)}</pre></details></article>)}</div></Panel>}
     {catalog.connection_error && <div className="callout amber"><p>{catalog.connection_error}</p><button className="text-button" onClick={() => discuss(catalog.connection_error)}>Discuss with campaign manager</button></div>}
     <Panel title="Implementation versions">
       <div className="form-grid"><Field label="Attach a version to an idea"><select value={target} onChange={e => setTarget(e.target.value)}>
@@ -224,7 +234,7 @@ export function ImplementationLibrary({ state, refresh, discuss }: { state: Stat
           </>}
         <Field label="Reason for reuse or decline" wide><textarea value={rationale} onChange={e => setRationale(e.target.value)} /></Field>
       </div>
-      {(catalog.versions || []).length ? <div className="run-list">{catalog.versions.map((version: Json) => {
+      {versions.length ? <div className="run-list">{versions.map((version: Json) => {
         const evaluator = version.kind === 'evaluator', manifest = version.spec.manifest;
         const assessment = catalog.candidates?.[version.id];
         const selected = evaluator ? !!taskId : !!target;
