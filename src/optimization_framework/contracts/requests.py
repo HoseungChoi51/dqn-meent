@@ -139,11 +139,21 @@ class RecipeInput(Model):
     wall_seconds: float = Field(default=120, gt=0, le=86400)
 
 
+class PrototypeAllocationInput(Model):
+    """Explicit final-run allocation, pinned to the reviewed source prototype."""
+    expected_control_revision: int = Field(ge=0, strict=True)
+    max_steps: int | None = Field(default=None, ge=1, le=10000000, strict=True)
+    wall_seconds: float | None = Field(default=None, gt=0, le=86400, strict=True)
+    schedule_steps: int | None = Field(default=None, ge=1, le=10000000, strict=True)
+    completion_count: int | None = Field(default=None, ge=1, strict=True)
+
+
 class StudyInput(Model):
     goal: str = Field(min_length=1, max_length=20000)
     scope: Literal["exploratory", "confirmation"] = "exploratory"
     task_ids: list[str] = Field(default_factory=list)
     prototype_trial_ids: list[str] = Field(default_factory=list)
+    prototype_allocations: dict[str, PrototypeAllocationInput] = Field(default_factory=dict)
     assumptions: list[str] = Field(default_factory=list)
     validation_policy: dict[str, Any] = Field(default_factory=dict)
     comparison: dict[str, Any] = Field(default_factory=lambda: {"cost_axis": "worker_seconds", "cost_view": "full_attributed_cost"})
@@ -166,6 +176,8 @@ class StudyInput(Model):
             raise ValueError("Pin both the finalist selection identity and revision")
         if self.finalist_selection_id is not None and self.scope != "confirmation":
             raise ValueError("Finalist prototypes are imported into a confirmation study")
+        if self.prototype_allocations and self.scope != "confirmation":
+            raise ValueError("Per-method final allocations belong to a confirmation study")
         return self
 
 

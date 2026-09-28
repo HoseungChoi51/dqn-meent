@@ -212,6 +212,7 @@ class Workspace:
     def create_study(self, campaign_id, request: StudyInput, *, authority="researcher"):
         from optimization_framework.contracts.confirmation import ConfirmationProtocol
         from optimization_framework.evaluation.confirmation import method_definition
+        from optimization_framework.evaluation.confirmation_allocations import binding_id, derive
         with self.lock, self.store.transaction():
             campaign = self.store.get(campaign_id, "campaign")
             tasks = self.current_tasks(campaign_id)
@@ -240,17 +241,32 @@ class Workspace:
                 raise ValueError("Nomination belongs to another campaign")
             from optimization_framework.analysis.finalists import confirmation_selection
             finalist_selection = confirmation_selection(self.store, campaign_id, request)
-            methods, prototypes = {}, {}
+            methods, prototypes, allocation_bindings, source_allocations = {}, {}, {}, {}
             prototype_ids = [*request.prototype_trial_ids, *((nomination or {}).get("prototypes", {}).values())]
+            if set(request.prototype_allocations) - set(prototype_ids):
+                raise ValueError("Final allocations must refer to selected prototype trials")
             for trial_id in dict.fromkeys(prototype_ids):
                 prototype = self.store.get(trial_id, "trial")
                 if prototype.get("method_contract") == 3:
                     raise ValueError("This procedure has cell-specific bindings; use its frozen template execution to confirm it")
                 if prototype["campaign_id"] != campaign_id or prototype.get("recipe") or prototype.get("diagnostic_grant_id") or prototype.get("execution_contract") != 1:
                     raise ValueError("Select a versioned optimization prototype from this campaign")
-                method = method_definition(prototype)
-                methods[content_hash(method)] = method
-                prototypes.setdefault(content_hash(method), trial_id)
+                source_method = method_definition(prototype)
+                source_id = content_hash(source_method)
+                method, allocation_binding = source_method, None
+                if trial_id in request.prototype_allocations:
+                    method, allocation_binding = derive(prototype, source_method, request.prototype_allocations[trial_id])
+                    if nomination and source_id in nomination["methods"] and method != source_method:
+                        raise ValueError("A frozen nomination fixes its method allocation. Use a manual finalist shortlist to define a different final allocation")
+                method_id = content_hash(method)
+                if source_id in source_allocations and source_allocations[source_id] != method_id:
+                    raise ValueError("Selected seed replicas of the same prototype procedure have conflicting final allocations; choose one representative")
+                source_allocations[source_id] = method_id
+                if method_id not in methods:
+                    methods[method_id] = method
+                    prototypes[method_id] = trial_id
+                    if allocation_binding:
+                        allocation_bindings[method_id] = allocation_binding
             if nomination and any(methods.get(key) != value for key, value in nomination["methods"].items()):
                 raise ValueError("The nominated source prototype changed; preserve the nomination and define a new study")
             references = []
@@ -293,6 +309,11 @@ class Workspace:
             entries = [("study", {**record, "content_hash": content_hash(record)}, "study.created")]
             if protocol:
                 entries.append(("confirmation_protocol", {**protocol.model_dump(mode="json"), "content_hash": protocol.digest()}, "confirmation.frozen"))
+                if allocation_bindings:
+                    binding = {"schema_version": 1, "id": binding_id(protocol.id), "campaign_id": campaign_id,
+                        "study_id": study_id, "protocol_id": protocol.id, "methods": allocation_bindings,
+                        "created_at": now()}
+                    self.store.put_immutable("confirmation_allocation_binding", binding, "confirmation.allocations_frozen")
             if finalist_selection:
                 binding = {"id": "finalists_for_" + study_id, "campaign_id": campaign_id, "study_id": study_id,
                     "protocol_id": protocol.id, **finalist_selection, "created_at": now()}

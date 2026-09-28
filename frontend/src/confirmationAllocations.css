@@ -1,0 +1,14 @@
+.confirmation-allocations{grid-column:1/-1;min-width:0;margin-top:12px;padding-top:12px;border-top:1px solid var(--line)}
+.confirmation-allocations h3{font-size:15px;margin:0 0 10px}.confirmation-allocations>.help-text{margin:8px 0 15px}
+.data-table.confirmation-allocation-table{table-layout:fixed;min-width:740px;white-space:normal;width:100%}
+.data-table.confirmation-allocation-table th,.data-table.confirmation-allocation-table td{padding:12px 9px;vertical-align:top;overflow-wrap:anywhere}
+.data-table.confirmation-allocation-table th:first-child,.data-table.confirmation-allocation-table td:first-child{width:23%;min-width:0}
+.data-table.confirmation-allocation-table th:nth-child(2){width:16%}.data-table.confirmation-allocation-table th:nth-child(3){width:16%}
+.data-table.confirmation-allocation-table th:nth-child(4){width:24%}.data-table.confirmation-allocation-table th:nth-child(5){width:21%}
+.data-table.confirmation-allocation-table small{display:block;font-size:10px;line-height:1.6;margin-top:6px}
+.data-table.confirmation-allocation-table .field{margin:0}.data-table.confirmation-allocation-table .field>label{font-size:10px;line-height:1.5}
+.data-table.confirmation-allocation-table input{width:100%;min-width:0;font-size:12px;padding:8px 7px}
+.data-table.confirmation-allocation-table .allocation-change{color:#80571f}
+.allocation-estimate{padding:14px 16px;border:1px solid var(--line);border-radius:6px;margin:16px 0;font-size:12px;line-height:1.7}
+.allocation-estimate p{margin:7px 0}.allocation-estimate .allocation-over-budget{color:#9b4a32;font-weight:600}
+.frozen-confirmation-allocations{margin:16px 0;font-size:12px}.frozen-confirmation-allocations>summary{cursor:pointer;margin-bottom:10px}

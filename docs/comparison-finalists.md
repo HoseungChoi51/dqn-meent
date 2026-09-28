@@ -28,11 +28,33 @@ budgets and allows additional controls. Multiple selected seed replicates of an
 identical procedure supply one prototype. Procedures with different budgets or
 other frozen settings remain distinct, even if their comparison method IDs match.
 
-Review the fresh seeds, validation requirements, and comparison rule before
-freezing the study. Confirmation copies the selected procedure's budget. Loading
-a 45-second prototype does not turn it into a longer experiment. Define the desired
-longer procedure first if the final study needs a different allocation. After the
-study is frozen, **Schedule missing cells** queues its required experiments.
+Set each finalist's main-run allocation before freezing: wall-clock cap per run,
+evaluation-request limit, schedule horizon, and completion target. For DQN, the
+schedule horizon controls exploration decay; increasing the time cap alone does
+not lengthen this schedule. Evaluation-request completion defaults to the main
+request limit. Other completion units retain their own explicit targets. The
+form previews the maximum time across methods, problem instances, and fresh seeds
+against the remaining campaign budget. Editing allocations does not reserve time
+or run experiments. Increase the campaign budget separately if needed.
+
+Review the fresh seeds, validation requirements, and comparison rule, then freeze
+the study. **Schedule missing cells** queues its required experiments. Each starts
+fresh with the prototype's captured code, parameters, runtime, and declared input
+assets; it does not resume the prototype's checkpoint. No longer intermediate
+prototype is required. The original experimental evidence and shortlist stay
+unchanged. A saved shortlist whose source was extended must be refreshed in
+**Compare results**, or the current source can be selected directly in the picker.
+
+Frozen confirmation allocations cannot be edited. Create another study if the
+main procedure must change. Rule-based development nominations also retain their
+frozen procedures; use a manual finalist selection to define a different main-run
+allocation. Differing budgets establish an explicitly allocated comparison, not
+an equal-compute comparison. Report the budgets with the results.
+
+An immutable allocation binding records the original source procedure and the
+resource changes that define each final procedure. Result evidence bundles carry
+this binding and source prototypes, and campaign memory exposes its compact
+provenance to the manager.
 
 For example, in the grating development campaign, comparison method `386c732e3a`
 uses hill climbing with `restart_patience=16`, and `0cb4fd1ed0` uses

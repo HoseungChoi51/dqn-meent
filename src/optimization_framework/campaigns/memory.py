@@ -90,7 +90,7 @@ class CampaignMemory:
     def _records(self, campaign_id):
         kinds = ("campaign", "task", "hypothesis", "trial", "decision", "decision_refresh", "action", "message", "source", "source_retrieval", "manager_note", "manager_issue", "manager_input", "manager_command", "implementation_grant",
                  "study", "nomination", "finalist_selection", "finalist_confirmation_binding", "budget_amendment", "campaign_budget_amendment", "validation_requirement", "validation_result", "waiver", "waiver_revocation",
-                 "confirmation_protocol", "confirmation_release", "confirmation_report", "execution_attempt", "diagnostic_grant", "reuse_decision", "asset", "work_command", "command_rejection", "outbox",
+                 "confirmation_protocol", "confirmation_allocation_binding", "confirmation_release", "confirmation_report", "execution_attempt", "diagnostic_grant", "reuse_decision", "asset", "work_command", "command_rejection", "outbox",
                  "experiment_draft", "draft_launch", "reproduction_comparison", "study_execution", "study_activation", "confirmation_design",
                  "protocol_cell", "method_binding", "cell_launch", "execution_grant", "execution_grant_release",
                  "evaluator_requirement", "evaluator_binding", "discovery_session", "discovery_task",
@@ -153,6 +153,12 @@ class CampaignMemory:
 
     @staticmethod
     def _text(kind, item):
+        if kind == "confirmation_allocation_binding":
+            return json.dumps({"kind": kind, **{key: item.get(key) for key in
+                ("id", "campaign_id", "study_id", "protocol_id", "content_hash")},
+                "methods": {identity: {key: value.get(key) for key in
+                    ("source_trial_id", "source_procedure_id", "source_control_revision", "allocation_overrides")}
+                    for identity, value in item["methods"].items()}}, ensure_ascii=False)
         if kind == "finalist_selection":
             from optimization_framework.analysis.finalists import summary
             return json.dumps({"kind": kind, **summary(item)}, ensure_ascii=False)

@@ -47,6 +47,7 @@ class ConfirmationService:
         It never replaces a failed cell or changes its source, seed, or budget.
         """
         from optimization_framework.contracts.requests import TrialInput
+        from .confirmation_allocations import source_matches
         with workspace.lock, self.store.transaction():
             protocol = self.store.get(protocol_id, "confirmation_protocol")
             if protocol.get("contract_version") == 2:
@@ -87,7 +88,7 @@ class ConfirmationService:
                 method = protocol["methods"][cell["method_id"]]
                 prototype_id = protocol["prototypes"][cell["method_id"]]
                 prototype = self.store.get(prototype_id, "trial")
-                if content_hash(method_definition(prototype)) != cell["method_id"]:
+                if not source_matches(self.store, protocol, cell["method_id"], prototype):
                     raise ValueError("The frozen source prototype changed; confirmation cannot substitute its current procedure")
                 request = TrialInput(campaign_id=campaign["id"], task_id=task["id"], seed=cell["seed"],
                     algorithm=method["algorithm"], implementation_version_id=method.get("implementation_version_id"),

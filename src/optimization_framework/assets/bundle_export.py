@@ -16,7 +16,7 @@ from optimization_framework.storage.bundles import write
 EVIDENCE_KINDS = {"asset", "cost_event", "cost_snapshot", "cost_reconciliation", "trial", "experiment_spec", "execution_attempt",
     "execution_source", "campaign", "task", "study", "hypothesis", "reuse_decision", "research_run", "research_result", "source", "source_retrieval", "finding", "manager_note",
     "implementation_grant", "runtime_resolution_receipt", "evaluator_requirement", "evaluator_binding",
-    "validation_requirement", "validation_result", "waiver", "waiver_revocation", "confirmation_protocol",
+    "validation_requirement", "validation_result", "waiver", "waiver_revocation", "confirmation_protocol", "confirmation_allocation_binding",
     "confirmation_design", "confirmation_release", "confirmation_report", "confirmation_reassessment",
     "nomination", "nomination_reassessment", "study_execution", "study_design", "budget_amendment", "deadline_enforcement",
     "execution_host_receipt", "reproduction_comparison"}
@@ -190,6 +190,20 @@ class Exporter:
                     self.edge(key, released, "exposure_release")
         elif kind == "execution_source":
             self.capture(key, self.store.directory / "sources" / identity, "compiler")
+        elif kind == "confirmation_protocol":
+            from optimization_framework.evaluation.confirmation import method_definition
+            from optimization_framework.evaluation.confirmation_allocations import binding_id
+            # Allocations have immutable sidecars so historical protocol digests
+            # remain unchanged. Carry the source-to-final derivation with results.
+            changed_allocation = False
+            for method_id, prototype_id in data.get("prototypes", {}).items():
+                self.add(prototype_id, required=True, parent=key, role="source_prototype")
+                try:
+                    prototype = self.store.get(prototype_id, "trial")
+                    changed_allocation |= content_hash(method_definition(prototype)) != method_id
+                except (KeyError, ValueError):
+                    pass  # Missing source evidence is already recorded above.
+            self.add(binding_id(identity), required=changed_allocation, parent=key, role="final_allocation")
         elif kind in {"cost_snapshot", "cost_reconciliation"}:
             # A cumulative receipt needs the original prefix to verify its
             # equations even when a root attributes only a later subinterval.

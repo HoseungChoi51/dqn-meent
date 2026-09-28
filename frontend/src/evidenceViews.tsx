@@ -11,6 +11,8 @@ import { BundleTransfers } from './bundles';
 import { CostReceipts } from './costReceipts';
 import { ReproductionPanel } from './reproduction';
 import { PrototypePicker } from './prototypePicker';
+import { ConfirmationAllocations, FrozenConfirmationAllocations, confirmationAllocationPayload } from './confirmationAllocations';
+import type { PrototypeAllocations } from './confirmationAllocations';
 
 type Props = { state: State; actions: WorkspaceActions };
 function Panel({ children, ...props }: ComponentProps<typeof BasePanel>) {
@@ -352,12 +354,17 @@ export function StudyView({ state, actions }: Props) {
   const [selectionRule, setSelectionRule] = useState<Json | null>(null), [analysisRule, setAnalysisRule] = useState<Json | null>(null);
   const [nominationId, setNominationId] = useState(''), [references, setReferences] = useState<string[]>([]);
   const [finalistSource, setFinalistSource] = useState<Json | null>(null);
-  useEffect(() => { setOpen(false); setMethods([]); setFinalistSource(null); setNominationId(''); setReferences([]); }, [state.campaign?.id]);
+  const [allocations, setAllocations] = useState<PrototypeAllocations>({});
+  useEffect(() => { setOpen(false); setMethods([]); setFinalistSource(null); setNominationId(''); setReferences([]); setAllocations({}); }, [state.campaign?.id]);
   const { data: assets } = useRead<Json[]>('/api/v1/assets', eventRevision(state));
   const { data: catalog } = useRead<Json>(problemCatalogPath(state.campaign?.id), eventRevision(state));
   const definitions = state.tasks.filter(task => taskIds.includes(task.id)).map(task => problemDefinition(catalog?.problems, task.problem));
   const assertionSchemas: Json = definitions[0]?.recipe_schemas || {};
   const checks = Object.keys(assertionSchemas).filter(id => definitions.length && definitions.every(definition => definition?.recipe_schemas?.[id]?.assertion_kind && definition.recipe_schemas[id].available !== false));
+  function selectMethods(ids: string[]) {
+    setMethods(ids);
+    setAllocations(current => Object.fromEntries(Object.entries(current).filter(([id]) => ids.includes(id))));
+  }
   async function submit(event: React.FormEvent) {
     event.preventDefault(); setFailure('');
     if (scope === 'confirmation' && !methods.length && !nominationId) { setFailure('Choose at least one prototype experiment or a frozen development nomination.'); return; }
@@ -369,6 +376,7 @@ export function StudyView({ state, actions }: Props) {
       comparison: { cost_axis: axis, cost_view: 'full_attributed_cost' },
       ...(scope === 'exploratory' && selectionRule ? { selection: selectionRule } : {}),
       ...(scope === 'confirmation' ? { confirmation_kind: kind, prototype_trial_ids: methods, seeds: seeds.split(',').map(Number), selection_rule: selection,
+        prototype_allocations: confirmationAllocationPayload(state, methods, nominationId, allocations),
         ...(finalistSource && methods.some(id => finalistSource.trial_ids.includes(id))
           ? { finalist_selection_id: finalistSource.id, finalist_selection_revision: finalistSource.revision } : {}),
         ...(analysisRule ? { analysis: analysisRule } : {}), ...(nominationId ? { nomination_id: nominationId } : {}), reference_trial_ids: references,
@@ -382,6 +390,7 @@ export function StudyView({ state, actions }: Props) {
     {(state.studies || []).map((study: Json) => <Panel key={study.id} title={study.goal} action={<Badge>{study.id === state.campaign?.active_study_id ? 'Active' : 'Previous'} · {study.scope}</Badge>}>
       <p>{study.comparison?.cost_axis?.replaceAll('_', ' ')} · full upstream cost</p><p className="help-text">{study.id}{study.parent_study_id ? ` · follows ${study.parent_study_id}` : ''}</p>
       {!study.execution_id && study.selection?.rule_id && <DevelopmentSelection state={state} actions={actions} study={study} />}
+      {!study.execution_id && study.confirmation?.id && <FrozenConfirmationAllocations study={study} />}
       {!study.execution_id && study.confirmation?.id && <ConfirmationRoster state={state} actions={actions} study={study} />}
       <details><summary>Frozen scope and evidence policy</summary><pre>{JSON.stringify(study, null, 2)}</pre></details></Panel>)}
     {open && <Modal wide title="Define a linked study" description="The current campaign's problem instances will be frozen into this study." onClose={() => setOpen(false)}><form onSubmit={submit}><div className="form-grid">
@@ -399,8 +408,10 @@ export function StudyView({ state, actions }: Props) {
       {scope === 'confirmation' && <><Field label="Confirmation protocol"><select value={kind} onChange={e => setKind(e.target.value)}><option value="seed_replication">Fresh seeds on a known instance</option><option value="unseen_instance">Unseen problem instances</option><option value="policy_transfer">Frozen policy transfer</option></select></Field>
         <Field label="Fresh seeds"><input required value={seeds} onChange={e => setSeeds(e.target.value)} /></Field>
         <Field wide label="Frozen development nomination" hint="A nomination includes its selected method automatically; choose any additional controls below."><select value={nominationId} onChange={e => setNominationId(e.target.value)}><option value="">Choose procedures directly</option>{(state.nominations || []).map((item: Json) => <option key={item.id} value={item.id}>{state.studies.find((study: Json) => study.id === item.study_id)?.goal || item.study_id} · {item.rule.rule_id}</option>)}</select></Field>
-        <PrototypePicker key={state.campaign?.id} state={state} value={methods} onChange={setMethods} disabled={busy}
-          onUseSaved={saved => { setMethods(saved.prototype_trial_ids); setFinalistSource(saved); }} />
+        <PrototypePicker key={state.campaign?.id} state={state} value={methods} onChange={selectMethods} disabled={busy}
+          onUseSaved={saved => { setMethods(saved.prototype_trial_ids); setFinalistSource(saved); setAllocations({}); }} />
+        <ConfirmationAllocations state={state} sourceIds={methods} nominationId={nominationId} taskIds={taskIds} seeds={seeds}
+          value={allocations} onChange={setAllocations} disabled={busy} />
         {analysisRule && <Field wide label="Frozen comparison references" hint="Optional prior completed experiments; the selected analysis rule determines whether references are required."><select multiple value={references} onChange={e => setReferences(Array.from(e.target.selectedOptions, item => item.value))}>{state.trials.filter(trial => trial.status === 'completed' && !trial.recipe && !trial.diagnostic_grant_id).map(trial => <option key={trial.id} value={trial.id}>{trial.algorithm} · seed {trial.seed} · {trial.id.slice(-8)}</option>)}</select></Field>}
         <Field wide label="Selection and comparison rule"><textarea required value={selection} onChange={e => setSelection(e.target.value)} /></Field>
         {kind === 'policy_transfer' && <Field label="Frozen policy asset"><select required value={policy} onChange={e => setPolicy(e.target.value)}><option value="">Select a declared policy</option>{assets?.filter(asset => asset.kind === 'policy').map(asset => <option key={asset.id} value={asset.id}>{asset.title}</option>)}</select></Field>}</>}

@@ -13,7 +13,7 @@ function canonical(value: any): string {
 
 // This groups the visible source procedures, including their resource limits.
 // The service still resolves and validates the authoritative procedure at freeze.
-function procedure(trial: Json): Json {
+export function prototypeProcedure(trial: Json): Json {
   return {
     ...(trial.diagnostics?.length ? { diagnostics: trial.diagnostics } : {}),
     ...([2, 3].includes(trial.method_contract) ? { method_contract: trial.method_contract, recovery: {
@@ -62,7 +62,7 @@ export function PrototypePicker({ state, value, onChange, onUseSaved, disabled =
   const savedIds: string[] = saved?.prototype_trial_ids || [];
   const savedTrialIds = new Set<string>(saved?.trial_ids || []);
   const byId = new Map(trials.map(trial => [trial.id, trial]));
-  const identities = useMemo(() => new Map(state.trials.map(trial => [trial.id, canonical(procedure(trial))])), [state.trials]);
+  const identities = useMemo(() => new Map(state.trials.map(trial => [trial.id, canonical(prototypeProcedure(trial))])), [state.trials]);
   const groups = new Map<string, Json[]>();
   for (const trial of trials) {
     if (source && trial.study_id !== source) continue;
@@ -105,7 +105,7 @@ export function PrototypePicker({ state, value, onChange, onUseSaved, disabled =
         : <span className="help-text">Mark finalists in Compare results to save a group for this study.</span>}</p>
     {!!savedIds.length && <p className="help-text">This button replaces the current prototype choices with the saved group. You can then add controls below. The editable shortlist is separate from a frozen development nomination.</p>}
     {!!missingSaved.length && <p className="help-text">Some saved source experiments are unavailable for direct confirmation. Review the saved group in Compare results.</p>}
-    {!!changedSaved.length && <p className="help-text">A saved procedure has changed. Review and save the group again in Compare results before importing it.</p>}
+    {!!changedSaved.length && <p className="help-text">A saved procedure has changed. <a href="#comparison">Review and save the group again in Compare results</a> before importing it.</p>}
     <label className="checkbox-label"><input type="checkbox" disabled={disabled} checked={finalistsOnly} onChange={event => setFinalistsOnly(event.target.checked)} />Show saved finalists only</label>
     <p role="status">{value.length} prototype{value.length === 1 ? '' : 's'} selected{outside.length ? ` · ${outside.length} outside the current filter` : ''}.</p>
     {!!outside.length && <ul>{outside.map(id => <li key={id}>{byId.get(id)?.algorithm || 'Unavailable experiment'} · {id}{' '}
@@ -128,7 +128,7 @@ export function PrototypePicker({ state, value, onChange, onUseSaved, disabled =
           <td>{parameters(trial)}<small>Completion: {Number(completion.count).toLocaleString()} {String(completion.unit).replaceAll('_', ' ')}</small>
             <small>Allocation: {Number(trial.max_steps).toLocaleString()} steps · {seconds(trial.wall_seconds)} wall limit</small>
             <small>Optimizer schedule: {Number(trial.schedule_steps).toLocaleString()} steps</small>
-            <details><summary>Exact procedure, implementation and inputs</summary><pre>{JSON.stringify(procedure(trial), null, 2)}</pre></details></td>
+            <details><summary>Exact procedure, implementation and inputs</summary><pre>{JSON.stringify(prototypeProcedure(trial), null, 2)}</pre></details></td>
           <td><select aria-label={`Source experiment for ${trial.algorithm} ${group[0].id}`} disabled={disabled} value={trial.id} onChange={event => {
             setRepresentatives(current => ({ ...current, [key]: event.target.value }));
             if (selectedId) choose(key, event.target.value, true);
@@ -140,6 +140,6 @@ export function PrototypePicker({ state, value, onChange, onUseSaved, disabled =
       })}
     </tbody></table></div>
     {!visible.length && <p className="help-text">No prototype experiments match this study and filter.</p>}
-    <p className="help-text">Confirmation copies each selected procedure's exact parameters, completion target, optimizer schedule and time limit. To use a larger budget, first create a source experiment with that budget. Freezing the study defines its roster; scheduling starts its runs.</p>
+    <p className="help-text">Confirmation copies each selected procedure's exact parameters, code and declared inputs. Set its main-run budget and schedule below. Freezing the study defines its roster; scheduling starts its runs.</p>
   </section>;
 }
