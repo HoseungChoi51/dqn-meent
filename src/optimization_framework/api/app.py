@@ -9,7 +9,7 @@ import os
 from pathlib import Path
 from typing import Literal
 
-from fastapi import FastAPI, Request
+from fastapi import FastAPI, Query, Request
 from fastapi.responses import FileResponse, JSONResponse, Response, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import Field
@@ -495,8 +495,8 @@ def create_app(directory=None, max_workers=2, start_workers=True, implementation
             campaign_id=trial["campaign_id"])["outcome"]["trial"]
 
     @app.get("/api/trials/{trial_id}/metrics")
-    def metrics(trial_id: str):
-        return workspace.metrics(trial_id)
+    def metrics(trial_id: str, limit: int | None = Query(default=None, ge=1, le=1000)):
+        return workspace.metrics(trial_id, limit=limit)
 
     @app.get("/api/trials/{trial_id}/logs")
     def logs(trial_id: str):

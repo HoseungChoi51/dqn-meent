@@ -1335,9 +1335,15 @@ class Workspace:
             except Exception as exc:
                 self.store.event(None, "service.error", {"message": str(exc)})
 
-    def metrics(self, trial_id, *, fields=None):
+    def metrics(self, trial_id, *, fields=None, limit=None):
         self.store.get(trial_id, "trial")
         path = self.job_dir(trial_id) / "metrics.jsonl"
+        if limit is not None:
+            if type(limit) is not int or not 1 <= limit <= 1000:
+                raise ValueError("Recent metrics limit must be an integer from 1 through 1000")
+            from optimization_framework.execution.metrics import recent_metrics
+            rows = recent_metrics(path, limit)
+            return [{field: row[field] for field in fields if field in row} for row in rows] if fields is not None else rows
         if fields is not None:
             return self._metric_projections.read(path, fields)
         if not path.exists():

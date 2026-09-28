@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react';
 import { activeStatuses, api, best, errorText, objectiveValue, seconds } from './api';
 import type { Json, State, Trial } from './api';
-import { Badge, Design, Empty, ErrorNotice, Modal, Panel, Status } from './ui';
+import { Badge, Design, Empty, ErrorNotice, Field, Modal, Panel, Status } from './ui';
 import type { WorkspaceActions } from './views';
 import { CharterHistory } from './views';
 import { EvaluatorRequest } from './evaluatorForms';
@@ -69,24 +69,38 @@ export function GeneralProblem({ state, actions }: Props) {
 }
 
 export function GeneralExperiments({ state, actions }: Props) {
-  const [selected, setSelected] = useState<string | null>(null);
+  const linkedTrial = () => location.hash.startsWith('#experiments/') ? location.hash.slice('#experiments/'.length) : null;
+  const [selected, setSelected] = useState<string | null>(linkedTrial);
+  const [studyId, setStudyId] = useState(state.campaign?.active_study_id || 'all');
+  useEffect(() => {
+    const change = () => setSelected(linkedTrial());
+    window.addEventListener('hashchange', change);
+    return () => window.removeEventListener('hashchange', change);
+  }, []);
+  useEffect(() => { setStudyId(state.campaign?.active_study_id || 'all'); }, [state.campaign?.id, state.campaign?.active_study_id]);
+  const trials = state.trials.filter(item => studyId === 'all' || item.study_id === studyId);
   const trial = state.trials.find(t => t.id === selected);
+  function closeDetail() { setSelected(null); history.replaceState(null, '', '#experiments'); }
   return <><div className="page-heading"><div><span className="eyebrow">Experiments</span><h1>Follow the evidence.</h1><p>Raw objectives, measured expenditure, and scientific completion remain distinct.</p></div>
     <button className="button primary" onClick={() => actions.launch()}>Design an experiment</button></div>
-    {!state.trials.length ? <Empty title="No experiments yet">Choose a method and a bounded allocation to establish a reference.</Empty> :
+    <Field label="Experiment study"><select value={studyId} onChange={event => setStudyId(event.target.value)}>
+      <option value="all">All studies</option>{(state.studies || []).map((study: Json) => <option key={study.id} value={study.id}>{study.id === state.campaign?.active_study_id ? 'Current · ' : ''}{study.scope} · {study.id}</option>)}
+    </select></Field>
+    <p className="help-text">Live counters refresh automatically. <a href="#studies">Open Studies for the run roster, allocation and launch status.</a></p>
+    {!trials.length ? <Empty title="No experiments in this study">A selected study does not start runs automatically. Open Studies to review its allocation and schedule its runs.</Empty> :
       <Panel title="Experiment history"><div className="table-scroll"><table className="data-table"><thead><tr><th>Method / problem</th><th>Status</th><th>Best objective</th><th>Requests / solves</th><th>Worker time</th><th>Scientific completion</th></tr></thead>
-        <tbody>{state.trials.map(t => { const p = { ...t.result, ...t.progress }; return <tr key={t.id}>
-          <td><button className="table-link" onClick={() => setSelected(t.id)}>{state.algorithms.find(a => a.id === t.algorithm)?.name || t.algorithm}</button><small>{state.tasks.find(task => task.id === t.task_id)?.name}{t.diagnostic_grant_id ? ' · Diagnostic job' : ''}</small></td>
+        <tbody>{trials.map(t => { const p = { ...t.result, ...t.progress }; return <tr key={t.id}>
+          <td><button className="table-link" onClick={() => setSelected(t.id)}>{state.algorithms.find(a => a.id === t.algorithm)?.name || t.algorithm}</button><small>Seed {t.seed} · {t.id}</small><small>{state.tasks.find(task => task.id === t.task_id)?.name}{t.diagnostic_grant_id ? ' · Diagnostic job' : ''}</small></td>
           <td><Status status={t.status} /></td><td>{objectiveValue(best(t), t.problem?.primary_objective)}</td><td>{p.evaluations || 0} / {p.solver_calls || 0}{p.unknown_solver_cost && ' + unknown'}</td>
           <td>{seconds(p.elapsed_seconds)}</td><td>{p.scientific_complete === true ? 'Complete' : 'Incomplete'}</td></tr>; })}</tbody></table></div></Panel>}
-    {trial && <ExperimentDetail trial={trial} state={state} actions={actions} onClose={() => setSelected(null)} />}</>;
+    {trial && <ExperimentDetail trial={trial} state={state} actions={actions} onClose={closeDetail} />}</>;
 }
 
 function ExperimentDetail({ trial, state, actions, onClose }: { trial: Trial; state: State; actions: WorkspaceActions; onClose: () => void }) {
   const command = useCommand(state.campaign);
   const [rows, setRows] = useState<Json[]>([]), [error, setError] = useState('');
   const progress = { ...trial.result, ...trial.progress };
-  useEffect(() => { let current = true; api<Json[]>(`/api/trials/${trial.id}/metrics`).then(items => { if (current) setRows(items); }).catch(e => { if (current) setError(errorText(e)); }); return () => { current = false; }; }, [trial.id, progress.step]);
+  useEffect(() => { let current = true; api<Json[]>(`/api/trials/${trial.id}/metrics?limit=20`).then(items => { if (current) { setRows(items); setError(''); } }).catch(e => { if (current) setError(errorText(e)); }); return () => { current = false; }; }, [trial.id, progress.step]);
   async function control(action: string) {
     try { await command('trial.control', { trial_id: trial.id, action, expected_control_revision: trial.control_revision ?? 0 }); await actions.refresh(); }
     catch (e) { setError(errorText(e)); }

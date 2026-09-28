@@ -4,6 +4,40 @@ import json
 from threading import Lock
 
 
+def recent_metrics(path, limit, *, block_bytes=65536):
+    """Read only enough trailing journal blocks for the last valid records.
+
+    Preserve append order, including repeated counters after recovery. The
+    journal itself remains the source of truth; this view does not merge
+    checkpoints, discard earlier attempts, or cache a running writer's tail.
+    """
+    try:
+        stream = path.open("rb")
+    except FileNotFoundError:
+        return []
+    rows, remainder = [], b""
+    with stream:
+        position = stream.seek(0, 2)
+        while position:
+            count = min(position, block_bytes)
+            position -= count
+            stream.seek(position)
+            lines = (stream.read(count) + remainder).split(b"\n")
+            remainder = lines.pop(0)
+            for line in reversed(lines):
+                try:
+                    rows.append(json.loads(line))
+                except ValueError:
+                    continue  # Match the ordinary reader's torn/malformed-line handling.
+                if len(rows) == limit:
+                    return list(reversed(rows))
+        try:
+            rows.append(json.loads(remainder))
+        except ValueError:
+            pass
+    return list(reversed(rows))
+
+
 class MetricProjectionCache:
     """Keep just requested scalar columns, never candidates or optimizer archives.
 

@@ -192,7 +192,7 @@ test('deferred Codex setup keeps experiments available and distinguishes the API
   await page.goto('/#problem');
   const panel = page.getByRole('complementary', { name: 'Research conversation' });
   if (!(await panel.isVisible())) await page.getByRole('button', { name: 'Campaign manager', exact: true }).click();
-  await expect(panel.getByText('Codex · GPT6-sol', { exact: true })).toBeVisible();
+  await expect(panel.getByRole('link', { name: 'Codex · GPT6-sol · Models', exact: true })).toBeVisible();
   await expect(panel.getByText('Model configuration deferred', { exact: true })).toBeVisible();
   await expect(panel.getByText(/requests are saved until model access is available/)).toBeVisible();
   await expect(page.getByText('API spending', { exact: true })).toBeVisible();

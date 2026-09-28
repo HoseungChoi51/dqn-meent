@@ -13,6 +13,7 @@ import { ReproductionPanel } from './reproduction';
 import { PrototypePicker } from './prototypePicker';
 import { ConfirmationAllocations, FrozenConfirmationAllocations, confirmationAllocationPayload } from './confirmationAllocations';
 import type { PrototypeAllocations } from './confirmationAllocations';
+import { StudyProgress, studySchedulingBudget } from './studyProgress';
 
 type Props = { state: State; actions: WorkspaceActions };
 function Panel({ children, ...props }: ComponentProps<typeof BasePanel>) {
@@ -179,7 +180,8 @@ export function ValidationView({ state, actions }: Props) {
 }
 
 function ConfirmationRoster({ state, actions, study }: Props & { study: Json }) {
-  const { data: assessment, error } = useRead<Json>(`/api/v1/confirmations/${study.confirmation.id}`, eventRevision(state));
+  const [refreshRevision, setRefreshRevision] = useState(0);
+  const { data: assessment, error, loading } = useRead<Json>(`/api/v1/confirmations/${study.confirmation.id}`, `${eventRevision(state)}:${refreshRevision}`);
   const command = useCommand(state.campaign), [busy, setBusy] = useState(false), [failure, setFailure] = useState('');
   const [closing, setClosing] = useState(false), [rationale, setRationale] = useState('');
   async function execute(operation: string, extra: Json = {}) {
@@ -188,10 +190,19 @@ function ConfirmationRoster({ state, actions, study }: Props & { study: Json }) 
       actions.notify(operation === 'confirmation.schedule' ? 'Missing confirmation cells queued.' : operation === 'confirmation.validate' ? 'Required checks queued for completed cells.' : 'Confirmation evidence released.'); }
     catch (e) { setFailure(errorText(e)); } finally { setBusy(false); }
   }
-  if (!assessment) return <ErrorNotice text={error} />;
+  if (!assessment) return <><ErrorNotice text={error} />{loading && <p role="status">Loading confirmation run status…</p>}</>;
   const pendingStatuses = ['queued', 'running', 'pausing', 'paused', 'stopping', 'interrupted'];
   const live = assessment.cells.some((cell: Json) => pendingStatuses.includes(cell.status) || cell.diagnostics?.jobs?.some((job: Json) => pendingStatuses.includes(job.status)));
+  const budget = studySchedulingBudget(assessment, state);
   return <div className="confirmation-roster"><ErrorNotice text={error} /><ErrorNotice text={failure} />
+    {assessment.release ? <p>Released as {assessment.release.outcome.replaceAll('_', ' ')}. {assessment.release.rationale}</p> : <div className="inline-actions">
+      {!assessment.execution_id && <button className="button secondary" disabled={busy || budget.blocked || assessment.cells.every((cell: Json) => cell.trial_id)} onClick={() => void execute('confirmation.schedule')}>Schedule missing cells</button>}
+      {!!assessment.required_recipes.length && <button className="button secondary" disabled={busy || !assessment.cells.some((cell: Json) => cell.scientific_complete && !cell.evidence_complete)} onClick={() => void execute('confirmation.validate')}>Run required checks</button>}
+      <button className="button primary" disabled={busy || !assessment.complete} onClick={() => void execute('confirmation.release')}>Release completed evidence</button>
+      {!assessment.complete && <button className="button secondary" disabled={busy || live} onClick={() => setClosing(true)}>Close as inconclusive</button>}
+    </div>}
+    <StudyProgress assessment={assessment} state={state} actions={actions} onRefresh={async () => { await actions.refresh(); setRefreshRevision(value => value + 1); }} />
+    <details><summary>Scientific evidence and required checks</summary>
     <p>{assessment.cells.filter((cell: Json) => cell.evidence_complete).length} / {assessment.cells.length} cells have complete evidence · {assessment.kind.replaceAll('_', ' ')}</p>
     <div className="table-scroll"><table className="data-table"><thead><tr><th>Method / seed</th><th>Instance</th><th>Procedure</th><th>Best observed</th><th>Required checks</th></tr></thead>
       <tbody>{assessment.cells.map((cell: Json) => <tr key={`${cell.method_id}-${cell.instance_digest}-${cell.seed}`}>
@@ -199,15 +210,9 @@ function ConfirmationRoster({ state, actions, study }: Props & { study: Json }) 
         <td title={cell.trial_id}>{cell.status.replaceAll('_', ' ')}{cell.scientific_complete && <small>Scientific procedure complete</small>}{cell.diagnostics?.grants?.length > 0 && <small>Diagnostics {cell.diagnostics.complete ? 'complete' : 'pending or incomplete'}</small>}</td>
         <td>{objectiveValue(cell.best_objective, cell.objective)}</td><td>{cell.required_validation.length ? cell.required_validation.map((check: Json) => <div key={check.recipe_id}>{check.recipe_id}: {check.passed ? 'Measured pass' : 'Evidence required'}</div>) : 'None declared'}</td>
       </tr>)}</tbody></table></div>
-    <p className="help-text">{assessment.interpretation}</p>
+    <p className="help-text">{assessment.interpretation}</p></details>
     {assessment.report && <details><summary>Evidence report · {assessment.report.claim_level.replaceAll('_', ' ')}{assessment.report.supersedes_report_id ? ' · reassessed' : ''}</summary>
       <p><strong>{assessment.report.outcome.replaceAll('_', ' ')}</strong></p><p>{assessment.report.interpretation}</p><pre>{JSON.stringify(assessment.report, null, 2)}</pre></details>}
-    {assessment.release ? <p>Released as {assessment.release.outcome.replaceAll('_', ' ')}. {assessment.release.rationale}</p> : <div className="inline-actions">
-      {!assessment.execution_id && <button className="button secondary" disabled={busy || assessment.cells.every((cell: Json) => cell.trial_id)} onClick={() => void execute('confirmation.schedule')}>Schedule missing cells</button>}
-      {!!assessment.required_recipes.length && <button className="button secondary" disabled={busy || !assessment.cells.some((cell: Json) => cell.scientific_complete && !cell.evidence_complete)} onClick={() => void execute('confirmation.validate')}>Run required checks</button>}
-      <button className="button primary" disabled={busy || !assessment.complete} onClick={() => void execute('confirmation.release')}>Release completed evidence</button>
-      {!assessment.complete && <button className="button secondary" disabled={busy || live} onClick={() => setClosing(true)}>Close as inconclusive</button>}
-    </div>}
     {!assessment.release && <p className="help-text">Stop or finish active cells and validation jobs before closing an incomplete roster. Declared input assets need a reuse decision for this study.</p>}
     {closing && <Modal title="Close incomplete confirmation" description="The frozen roster will close with an inconclusive outcome. Further work needs a linked study." onClose={() => setClosing(false)}>
       <form onSubmit={e => { e.preventDefault(); void execute('confirmation.release', { allow_incomplete: true, rationale }); }}>
@@ -387,8 +392,10 @@ export function StudyView({ state, actions }: Props) {
   return <><div className="page-heading"><div><span className="eyebrow">Scientific scope</span><h1>Study history.</h1><p>Scientific changes create a linked study. Experiment procedures and prior evidence retain their original scope.</p></div>
     <button className="button primary" onClick={() => { setOpen(true); setGoal(state.campaign?.objective || ''); setTaskIds(state.tasks.map(task => task.id)); setRequiredChecks([]); setCheckParameters({}); }}>Define a new study</button></div>
     <TemplateStudies state={state} actions={actions} />
-    {(state.studies || []).map((study: Json) => <Panel key={study.id} title={study.goal} action={<Badge>{study.id === state.campaign?.active_study_id ? 'Active' : 'Previous'} · {study.scope}</Badge>}>
+    {[...(state.studies || [])].sort((a: Json, b: Json) => Number(b.id === state.campaign?.active_study_id) - Number(a.id === state.campaign?.active_study_id))
+      .map((study: Json) => <Panel key={study.id} title={(study.goal || '').length > 140 ? `${study.goal.slice(0, 137)}…` : study.goal || 'Untitled study'} action={<Badge>{study.id === state.campaign?.active_study_id ? 'Current study' : 'Previous study'} · {study.scope}</Badge>}>
       <p>{study.comparison?.cost_axis?.replaceAll('_', ' ')} · full upstream cost</p><p className="help-text">{study.id}{study.parent_study_id ? ` · follows ${study.parent_study_id}` : ''}</p>
+      {(study.goal || '').length > 140 && <details><summary>Full study question</summary><p className="study-scientific-question">{study.goal}</p></details>}
       {!study.execution_id && study.selection?.rule_id && <DevelopmentSelection state={state} actions={actions} study={study} />}
       {!study.execution_id && study.confirmation?.id && <FrozenConfirmationAllocations study={study} />}
       {!study.execution_id && study.confirmation?.id && <ConfirmationRoster state={state} actions={actions} study={study} />}
