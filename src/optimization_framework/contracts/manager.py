@@ -71,6 +71,7 @@ class CampaignContext(Contract):
     findings: list[FindingContext] = Field(default_factory=list)
     counterevidence: list[FindingContext] = Field(default_factory=list)
     reuse_decisions: list[ReuseContext] = Field(default_factory=list)
+    finalist_selections: list[dict] = Field(default_factory=list)
     pending_issues: list[IssueContext] = Field(default_factory=list)
     next_actions: list[NextActionContext] = Field(default_factory=list)
     narrative_guidance: str = Field(min_length=1, max_length=49152)

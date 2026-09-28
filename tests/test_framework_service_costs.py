@@ -5,7 +5,7 @@ import pytest
 
 from optimization_framework.assets.catalog import AssetCatalog
 from optimization_framework.assets.service_costs import research_asset, implementation_asset, model_quantities
-from optimization_framework.contracts.assets import Asset
+from optimization_framework.contracts.assets import Asset, CostEvent
 from optimization_framework.storage.sqlite import Store
 
 
@@ -25,6 +25,41 @@ def test_resumed_model_turn_appends_only_new_usage_and_freezes_old_prefix(tmp_pa
     assert catalog.attributed_costs([later["id"]], axes=["model_calls"])["quantities"]["model_calls"]["total"] == 3
     assert catalog.actual_costs("origin", axes=["model_seconds"])["quantities"]["model_seconds"]["total"] == 5
     assert len(catalog.store.list("cost_event")) == 2
+
+
+def test_exact_cost_receipt_replay_avoids_global_cost_history_scan(tmp_path, monkeypatch):
+    catalog = AssetCatalog(Store(tmp_path))
+    run = {"id": "turn", "campaign_id": "origin", "created_at": "test", "usage": usage()}
+    first = research_asset(catalog, run)
+    list_records = catalog.store.list
+    before = list_records("cost_event")
+
+    def forbid_cost_scan(kind, *args, **kwargs):
+        assert kind != "cost_event", "An unchanged receipt must not parse all numerical cost events"
+        return list_records(kind, *args, **kwargs)
+
+    with monkeypatch.context() as patch:
+        patch.setattr(catalog.store, "list", forbid_cost_scan)
+        assert research_asset(catalog, run) == first
+    assert list_records("cost_event") == before
+    # A changed receipt still performs full reconciliation and appends only the
+    # newly observed work, without changing the earlier immutable prefix.
+    later = research_asset(catalog, {**run, "usage": usage(2, 5)})
+    assert len(list_records("cost_event")) == 2
+    assert catalog.attributed_costs([first["id"]], axes=["model_calls"])["quantities"]["model_calls"]["total"] == 1
+    assert catalog.attributed_costs([later["id"]], axes=["model_calls"])["quantities"]["model_calls"]["total"] == 2
+
+
+@pytest.mark.parametrize("ordinal,owner,error", [(2, "origin", "complete original event prefix"),
+    (1, "other_campaign", "original campaign owner")])
+def test_exact_receipt_replay_keeps_prefix_and_owner_checks(tmp_path, ordinal, owner, error):
+    catalog = AssetCatalog(Store(tmp_path))
+    run = {"id": "turn", "campaign_id": "origin", "created_at": "test", "usage": usage()}
+    research_asset(catalog, run)
+    catalog.record_cost(CostEvent(id="later_cost", campaign_id=owner, source_id="model:turn", ordinal=ordinal,
+        category="model", quantities={"model_calls": 1}, created_at="test"))
+    with pytest.raises(ValueError, match=error):
+        research_asset(catalog, run)
 
 
 def test_unknown_usage_is_not_the_conservative_reservation_or_zero():

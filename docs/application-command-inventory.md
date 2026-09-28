@@ -87,6 +87,11 @@ Research controls, decision choices and source requests now retain their origina
 envelopes and recover accepted replies after a reload. Source retrieval remains
 asynchronous and its pending/failed status is visible in the source library.
 
+Outdated execution recommendations use researcher-only `decision.refresh`
+through the same shared envelope. A single card or selected batch retains exact
+originals and notes, then queues a current manager review. This never renews old
+execution authority. See [decision reconsideration](decision-reconsideration.md).
+
 Preserve the existing feedback behavior: saving a comment, requesting a critique
 and requesting a revision are distinct operations. A failed model submission
 must not discard a saved comment or save it twice on retry.
@@ -103,6 +108,17 @@ authority. A durable result receipt precedes atomic projection and action outbox
 delivery. Current command delivery is available through the separate read-only
 `GET /api/v1/commands/{command_id}/delivery` projection; admission receipts remain
 immutable. Delivery follows manager actions into their subordinate work.
+
+If a saved researcher question is blocked before dispatch, researcher-only
+`research.retry` accepts `{"manager_command_id": "turn_<original-command-id>"}`
+through `POST /api/v1/commands`. It requeues that exact question and its original
+inbox entry against current campaign context, without creating another message
+or changing scientific guidance. The shared envelope checks current charter,
+guidance and authority. Retry is rejected once any research run, discovery task,
+or consumed input shows that the question was dispatched; uncertain provider
+calls still require their existing reconciliation controls. The original error
+stays in retry history, and its technical issue resolves only after successful
+dispatch. A repeated context failure stays blocked until another explicit retry.
 
 The shipped `dqn-meent train`, `baseline` and `evaluate` commands now use
 [recorded.py](../src/dqn_meent/recorded.py) and the common

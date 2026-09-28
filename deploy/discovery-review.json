@@ -4,7 +4,7 @@
   "workspace_port": 8791,
   "implementation_port": 8790,
   "tailnet_port": 8449,
-  "workers": 2,
+  "workers": 16,
   "provider": "codex",
   "model": "gpt-6-luna",
   "codex_timeout_seconds": 600,

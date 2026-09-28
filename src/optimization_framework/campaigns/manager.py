@@ -71,7 +71,8 @@ class CampaignManager(research.ResearchCoordinator):
         with self.store.transaction():
             run = super().start(ResearchInput.model_validate(command["request"]), automatic=command["automatic"],
                 command_id=command["id"], feedback_snapshot=command.get("feedback_snapshot"),
-                input_ids=[item["id"] for item in inputs], dispatch=False)
+                input_ids=[item["id"] for item in inputs], dispatch=False,
+                decision_refresh_id=command.get("decision_refresh_id"))
             stored = self.store.get(run["id"], "research_run")
             consumed = [self.store.get(key, "manager_input") for key in stored.get("manager_input_ids", [])]
             inbox.bind(self.store, consumed, command["id"], run["id"])
@@ -79,6 +80,11 @@ class CampaignManager(research.ResearchCoordinator):
                 context_revision_id=stored["context_snapshot"]["manager_context"]["revision_id"],
                 input_ids=[item["id"] for item in consumed])
             self.store.put("manager_command", command, "manager.message_dispatched")
+            for issue in self.store.list("manager_issue", command["campaign_id"]):
+                if issue["code"] == "manager_request" and issue.get("affected") == command["id"] and issue["status"] == "pending":
+                    self.store.put("manager_issue", {**issue, "status": "resolved", "resolved_at": now(),
+                        "resolution_basis": "saved_request_dispatched", "research_run_id": run["id"],
+                        "revision": issue.get("revision", 1) + 1}, "manager.request_recovered")
         self._thread(stored)
         return run
 
@@ -122,10 +128,14 @@ class CampaignManager(research.ResearchCoordinator):
             for campaign in campaigns:
                 cid = campaign["id"]
                 inbox.consume_events(self.workspace, cid)
-                if self.workspace.discovery.active(cid):
+                runs = self.store.list("research_run", cid)
+                refreshes = [row for row in self.store.list("manager_command", cid)
+                    if row.get("decision_refresh_id") and row["status"] in {"queued", "waiting_provider"}]
+                parallel_review = any(run.get("decision_review") and run["status"] in {"running", "stopping", "needs_reconciliation"}
+                    for run in runs)
+                if self.workspace.discovery.active(cid) and not refreshes and not parallel_review:
                     self.workspace.discovery.tick(cid)
                     continue
-                runs = self.store.list("research_run", cid)
                 for run in runs:
                     if run["status"] == "running" and run.get("dispatch_phase") == "recovery_pending":
                         self._thread(run)
@@ -133,7 +143,7 @@ class CampaignManager(research.ResearchCoordinator):
                     continue
                 queued = [row for row in self.store.list("manager_command", cid)
                           if row["status"] in {"queued", "waiting_provider"}]
-                command = queued[0] if queued else self._queue_events(campaign)
+                command = refreshes[0] if refreshes else queued[0] if queued else self._queue_events(campaign)
                 if command is None:
                     continue
                 if not research.provider_status()["configured"]:

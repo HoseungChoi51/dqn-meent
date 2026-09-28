@@ -266,11 +266,27 @@ def test_model_can_request_judgment_and_does_not_launch_jobs(monkeypatch):
     configure(monkeypatch)
     mock_provider(monkeypatch, lambda *_: {"analysis": "Evidence is startup-limited.", "questions": ["Extend the surrogate?"],
         "actions": [{"kind": "extend", "title": "Extend startup", "rationale": "Need model-guided samples", "question": "Does the model repay startup?",
+                     "requires_researcher": True,
                      "task_id": "dev", "budget_calls": 80, "expected_information": "Improvement after warm-up", "stopping_condition": "After 80 calls"}]})
     result = research.run_research({"mode": "discuss"}, context())
     assert result["status"] == "awaiting_researcher"
     assert result["actions"][0]["status"] == "proposed"
     assert result["actions"][0]["requires_researcher"] is True
+
+
+@pytest.mark.parametrize("requires_researcher", [False, True])
+def test_model_execution_intent_is_preserved_without_framework_overwrite(monkeypatch, requires_researcher):
+    configure(monkeypatch)
+    mock_provider(monkeypatch, lambda *_: {"analysis": "One explicit baseline trial.", "actions": [{
+        "kind": "probe", "title": "Explicit random baseline", "rationale": "Measure a baseline", "question": "What is baseline performance?",
+        "task_id": "dev", "algorithm": "random", "algorithm_config": {}, "probe_scope": "single_trial", "seed": 7,
+        "requires_researcher": requires_researcher, "budget_calls": 8, "wall_seconds": 5,
+        "expected_information": "One baseline measurement", "stopping_condition": "Eight requests or five seconds"}]})
+    result = research.run_research({"mode": "discuss"}, context())
+    action = result["actions"][0]
+    assert action["requires_researcher"] is requires_researcher
+    assert action["probe_scope"] == "single_trial" and action["algorithm"] == "random"
+    assert action["seed"] == 7 and action["budget_calls"] == 8 and action["wall_seconds"] == 5
 
 
 def test_dollar_budget_prevents_network_when_pricing_unknown_or_insufficient(monkeypatch):

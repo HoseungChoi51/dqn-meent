@@ -3,6 +3,7 @@ from optimization_framework.contracts.manager import CampaignContext
 
 
 def assemble(workspace, campaign, state, records):
+    from optimization_framework.analysis.finalists import summary as finalist_summary
     notes = [row for kind, row in records if kind == "manager_note" and row.get("kind") in {"finding", "counterevidence"}]
     findings = [{"id": row["id"], "classification": ("counterevidence" if row["kind"] == "counterevidence" else
         "researcher_endorsement" if row.get("interpretation") == "researcher_endorsed" else
@@ -39,6 +40,7 @@ def assemble(workspace, campaign, state, records):
         counterevidence=[row for row in findings if row["classification"] == "counterevidence"],
         reuse_decisions=[{key: row[key] for key in ("id", "asset_id", "study_id", "decision", "intended_use", "rationale")}
             for kind, row in records if kind == "reuse_decision"],
+        finalist_selections=[finalist_summary(row) for kind, row in records if kind == "finalist_selection"],
         pending_issues=[{"id": row["id"], "code": row["code"], "message": row["message"],
             "affected_ids": [row["affected"]] if row.get("affected") else []}
             for kind, row in records if kind == "manager_issue" and row["status"] == "pending"],

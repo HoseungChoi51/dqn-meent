@@ -29,7 +29,29 @@ def append_snapshot(catalog, source_id, campaign_id, quantities, *, category, cr
     """Reconstruct physical history; new knowledge reconciles an existing prefix."""
     quantities = {axis: float(value) if value is not None else None for axis, value in quantities.items()}
     tracker_id = "cost_cursor_" + content_hash(source_id)
+    snapshot_values = {"campaign_id": campaign_id, "source_id": source_id, "quantities": quantities,
+        "evidence_ids": sorted(set(evidence_ids)), "receipt": receipt or {}, "work_cursor": str(work_cursor) if work_cursor is not None else None}
+    snapshot_id = "cost_snapshot_" + content_hash(snapshot_values)
     with catalog.store.transaction():
+        try:
+            known_snapshot = catalog.store.get(snapshot_id, "cost_snapshot")
+        except KeyError:
+            known_snapshot = None
+        if known_snapshot:
+            # Exact immutable receipt replay needs no new accounting equations.
+            # Verify its source prefix through the transactionally maintained
+            # ordinal index without parsing every other campaign's cost history.
+            with catalog.store.connection() as db:
+                position = db.execute("""SELECT COUNT(*) AS count, MIN(p.ordinal) AS first,
+                    MAX(p.ordinal) AS last, SUM(CASE WHEN r.campaign_id IS NOT ? THEN 1 ELSE 0 END) AS foreign_owner
+                    FROM cost_positions p LEFT JOIN records r ON r.id=p.cost_event_id
+                    WHERE p.source_id=?""", (campaign_id, source_id)).fetchone()
+            if (not position["count"] or position["first"] != 0
+                    or position["count"] != position["last"] + 1 or position["count"] < known_snapshot["stop"]):
+                raise ValueError("Cost reconciliation requires the complete original event prefix; import its missing evidence first")
+            if position["foreign_owner"]:
+                raise ValueError("A cost source retains its original campaign owner")
+            return CostSlice(source_id=source_id, stop=known_snapshot["stop"])
         # Imported cursors are intentionally not an authority. Derive the local
         # position from original events and reconciliations, including old data
         # that predates immutable service snapshots.
@@ -39,15 +61,6 @@ def append_snapshot(catalog, source_id, campaign_id, quantities, *, category, cr
             prefix(events, stop)
             if any(event["campaign_id"] != campaign_id for event in events):
                 raise ValueError("A cost source retains its original campaign owner")
-        snapshot_values = {"campaign_id": campaign_id, "source_id": source_id, "quantities": quantities,
-            "evidence_ids": sorted(set(evidence_ids)), "receipt": receipt or {}, "work_cursor": str(work_cursor) if work_cursor is not None else None}
-        snapshot_id = "cost_snapshot_" + content_hash(snapshot_values)
-        try:
-            known_snapshot = catalog.store.get(snapshot_id, "cost_snapshot")
-        except KeyError:
-            known_snapshot = None
-        if known_snapshot:
-            return CostSlice(source_id=source_id, stop=known_snapshot["stop"])
         reconciliations = [row for row in catalog.store.list("cost_reconciliation") if row["source_id"] == source_id]
         totals, _ = project(events, reconciliations, {source_id: [(0, stop)]} if stop else {}, quantities)
         previous = {axis: value["total"] for axis, value in totals.items()}

@@ -1,0 +1,16 @@
+.comparison-shortlist{padding:16px 18px;border:1px solid var(--line);border-radius:9px;margin:18px 0;background:#f4f7f1}
+.comparison-shortlist>p{font-size:12px;line-height:1.6;margin:8px 0 12px}
+.comparison-selection-actions,.comparison-table-options{display:flex;gap:12px;align-items:center;flex-wrap:wrap;margin:16px 0}
+.comparison-selection-actions>strong{font-size:12px}.comparison-table-options>.field{margin:0;min-width:220px}
+.data-table.comparison-results{min-width:1000px;white-space:normal}.data-table.comparison-results td{vertical-align:top}.data-table.comparison-results td:nth-child(2){min-width:235px;max-width:340px}
+.data-table.comparison-results input[type=checkbox]{width:17px;height:17px}.data-table.comparison-results small,.data-table.comparison-diff small{display:block;margin-top:6px;font-size:10px;line-height:1.5}
+.comparison-parameters{overflow-wrap:anywhere}.data-table.comparison-results .comparison-parameters{display:-webkit-box;-webkit-line-clamp:3;-webkit-box-orient:vertical;overflow:hidden}
+.comparison-sort{font:inherit;color:inherit;background:none;border:0;text-align:left;padding:0;cursor:pointer;white-space:nowrap}
+.comparison-sort:hover,.comparison-sort:focus-visible{text-decoration:underline}.comparison-finalist{background:#f1f6eb}
+.comparison-question{margin-top:7px;font-size:10px}.comparison-question>summary{cursor:pointer}.comparison-question>p{white-space:normal;line-height:1.6;margin-top:7px}
+.data-table.comparison-results th:first-child,.data-table.comparison-results td:first-child{min-width:0;width:48px;padding-inline:12px}
+.data-table.comparison-diff{white-space:normal;table-layout:fixed}.data-table.comparison-diff th,.data-table.comparison-diff td{min-width:0;vertical-align:top;overflow-wrap:anywhere;padding:12px}
+.data-table.comparison-diff th{font-size:11px;text-transform:none;letter-spacing:0}.data-table.comparison-diff th:first-child{width:32%}
+.data-table.comparison-diff .comparison-difference>td,.data-table.comparison-diff .comparison-difference>th{background:#fff6df}.data-table.comparison-diff .comparison-difference>th{border-left:3px solid #b68a3c}.data-table.comparison-diff tbody th{font-weight:500}.data-table.comparison-diff tbody th small{color:#718068}
+.comparison-raw{margin:16px 0}.comparison-raw>summary{cursor:pointer;font-size:12px}.comparison-raw pre{white-space:pre-wrap;overflow-wrap:anywhere}
+.comparison-caution{padding:12px;border-left:3px solid #b68a3c;background:#fff6df;font-size:12px;line-height:1.6}

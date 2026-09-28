@@ -17,6 +17,34 @@ def merged_intervals(intervals):
     return result
 
 
+def contributions(assets, asset_ids):
+    """Resolve immutable contribution identities against an already read catalog."""
+    seen, pending, intervals, unknown = set(), set(), {}, []
+
+    def visit(asset_id):
+        if asset_id in pending:
+            raise ValueError("Asset dependency cycle")
+        if asset_id in seen:
+            return
+        if asset_id not in assets:
+            raise ValueError(f"Missing upstream asset {asset_id}")
+        pending.add(asset_id)
+        asset = assets[asset_id]
+        if asset["cost_provenance"] != "complete":
+            unknown.append(asset_id)
+        for dependency_id in asset["dependency_ids"]:
+            visit(dependency_id)
+        for cost in asset["costs"]:
+            intervals.setdefault(cost["source_id"], []).append([cost["start"], cost["stop"]])
+        pending.remove(asset_id)
+        seen.add(asset_id)
+
+    for asset_id in asset_ids:
+        visit(asset_id)
+    return {"asset_ids": sorted(seen), "intervals": {key: merged_intervals(value) for key, value in intervals.items()},
+            "unknown_provenance_asset_ids": sorted(unknown)}
+
+
 class AssetCatalog:
     def __init__(self, store, artifacts=None):
         self.store = store
@@ -165,30 +193,12 @@ class AssetCatalog:
 
     def contributions(self, asset_ids):
         assets = {item["id"]: item for item in self.store.list("asset")}
-        seen, pending, intervals, unknown = set(), set(), {}, []
+        return contributions(assets, asset_ids)
 
-        def visit(asset_id):
-            if asset_id in pending:
-                raise ValueError("Asset dependency cycle")
-            if asset_id in seen:
-                return
-            if asset_id not in assets:
-                raise ValueError(f"Missing upstream asset {asset_id}")
-            pending.add(asset_id)
-            asset = assets[asset_id]
-            if asset["cost_provenance"] != "complete":
-                unknown.append(asset_id)
-            for dependency_id in asset["dependency_ids"]:
-                visit(dependency_id)
-            for cost in asset["costs"]:
-                intervals.setdefault(cost["source_id"], []).append([cost["start"], cost["stop"]])
-            pending.remove(asset_id)
-            seen.add(asset_id)
-
-        for asset_id in asset_ids:
-            visit(asset_id)
-        return {"asset_ids": sorted(seen), "intervals": {key: merged_intervals(value) for key, value in intervals.items()},
-                "unknown_provenance_asset_ids": sorted(unknown)}
+    def cost_view(self):
+        """Read a fresh cost snapshot for one report; never cache it on the catalog."""
+        from optimization_framework.assets.cost_view import CostView
+        return CostView(self)
 
     @staticmethod
     def summarize_costs(events, axes, *, missing=0, unknown_provenance=0):

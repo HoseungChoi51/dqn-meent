@@ -153,10 +153,20 @@ class StudyInput(Model):
     selection: RuleRequest | None = None
     analysis: RuleRequest | None = None
     nomination_id: str | None = None
+    finalist_selection_id: str | None = None
+    finalist_selection_revision: int | None = Field(default=None, ge=1)
     reference_trial_ids: list[str] = Field(default_factory=list)
     policy_asset_id: str | None = None
     adaptation: Literal["forbidden", "budgeted"] = "forbidden"
     adaptation_procedure: dict[str, Any] = Field(default_factory=dict)
+
+    @model_validator(mode="after")
+    def finalist_selection_pin(self):
+        if (self.finalist_selection_id is None) != (self.finalist_selection_revision is None):
+            raise ValueError("Pin both the finalist selection identity and revision")
+        if self.finalist_selection_id is not None and self.scope != "confirmation":
+            raise ValueError("Finalist prototypes are imported into a confirmation study")
+        return self
 
 
 class HypothesisInput(Model):

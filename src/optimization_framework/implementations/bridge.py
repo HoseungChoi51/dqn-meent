@@ -230,7 +230,9 @@ class ImplementationBridge:
             else:
                 if self.compute_committed(campaign_id) + compute_seconds > campaign.get("implementation_compute_budget_seconds", 0):
                     raise ValueError("Assign a separate implementation compute allocation in the campaign charter before commissioning this job")
-                research_spent = sum(api_spend(r.get("usage")) for r in self.store.list("research_run", campaign_id))
+                research_spent = sum(api_spend(r.get("usage"))
+                    + (r.get("decision_review") or {}).get("budget_hold_usd", 0)
+                    for r in self.store.list("research_run", campaign_id))
                 if research_spent + self.api_committed(campaign_id) + api_budget_usd > campaign["llm_budget_usd"] + 1e-9:
                     raise ValueError("Implementation model allocation exceeds the campaign's remaining API cap")
                 grant = {"id": identity, "campaign_id": campaign_id, "hypothesis_id": hypothesis_id,

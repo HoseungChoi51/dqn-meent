@@ -7,10 +7,10 @@ from .base import Contract
 from .requests import CampaignUpdate, ControlInput, ValidationInput, ReviewInput, DecisionInput
 from optimization_framework.implementations.models import EvaluatorSpec, EvaluatorPackage, EvaluatorCheckSpec, OptimizerCheckSpec
 
-Operation = Literal["campaign.create", "campaign.update", "context.edit", "issue.resolve", "trial.create", "trial.control", "trial.validate", "draft.save", "draft.launch", "reproduction.draft", "reproduction.compare", "study.create", "study.nominate", "study.freeze_template", "study.activate", "validation.run", "validation.require", "validation.execute", "validation.waive",
+Operation = Literal["campaign.create", "campaign.update", "context.edit", "issue.resolve", "trial.create", "trial.control", "trial.validate", "draft.save", "draft.launch", "reproduction.draft", "reproduction.compare", "study.create", "study.nominate", "finalist.set", "study.freeze_template", "study.activate", "validation.run", "validation.require", "validation.execute", "validation.waive",
     "models.configure", "discovery.start", "discovery.control", "discovery.amend", "discovery.retry", "discovery.assessment.save", "discovery.assessment.launch", "discovery.assessment.decide",
     "validation.revoke_waiver", "context.import", "inference.run", "asset.reuse", "asset.import_reference_set", "cost.reconcile", "comparison.report", "finding.record", "implementation.commission",
-    "implementation.attach", "evaluator.commission", "evaluator.attach", "implementation.control", "implementation.revalidate", "implementation.reuse", "implementation.resolve_runtime", "bundle.export", "bundle.inspect", "bundle.publish", "research.start", "research.control", "decision.resolve", "source.record", "source.ingest", "hypothesis.create", "hypothesis.review", "hypothesis.status", "hypothesis.nominate", "literature.search", "confirmation.schedule", "confirmation.validate", "confirmation.release"]
+    "implementation.attach", "evaluator.commission", "evaluator.attach", "implementation.control", "implementation.revalidate", "implementation.reuse", "implementation.resolve_runtime", "bundle.export", "bundle.inspect", "bundle.publish", "research.start", "research.retry", "research.control", "decision.resolve", "decision.refresh", "source.record", "source.ingest", "hypothesis.create", "hypothesis.review", "hypothesis.status", "hypothesis.nominate", "literature.search", "confirmation.schedule", "confirmation.validate", "confirmation.release"]
 
 
 class Command(Contract):
@@ -41,6 +41,15 @@ class CampaignUpdateInput(CampaignUpdate):
     rationale: str = Field(default="Researcher revised the campaign charter", min_length=1, max_length=5000)
 
 
+class FinalistSetInput(Contract):
+    """A revisable researcher shortlist, separate from a frozen nomination."""
+    study_id: str
+    trial_ids: list[str] = Field(default_factory=list, max_length=500)
+    label: str | None = Field(default=None, max_length=200)
+    expected_revision: int | None = Field(default=None, ge=0)
+    expected_procedure_ids: dict[str, str] = Field(default_factory=dict)
+
+
 class TrialControlInput(ControlInput):
     trial_id: str
     expected_control_revision: int = Field(ge=0)
@@ -56,9 +65,34 @@ class ResearchControlInput(Contract):
     expected_control_revision: int = Field(ge=0)
 
 
+class ResearchRetryInput(Contract):
+    """Retry the exact saved question only when no model run was dispatched."""
+    manager_command_id: str = Field(min_length=1, max_length=200)
+
+
 class DecisionResolveInput(DecisionInput):
     decision_id: str
     expected_resolution_revision: int = Field(ge=0)
+
+
+class DecisionRefreshItem(Contract):
+    decision_id: str
+    expected_resolution_revision: int = Field(ge=0)
+    desired_choice: str | None = Field(default=None, min_length=1, max_length=200)
+    comment: str = Field(default="", max_length=20000)
+
+
+class DecisionRefreshInput(Contract):
+    decisions: list[DecisionRefreshItem] = Field(min_length=1, max_length=50)
+    comment: str = Field(default="", max_length=20000)
+    max_parallel_reviews: int = Field(default=3, ge=1, le=8)
+    retry_run_id: str | None = Field(default=None, min_length=1, max_length=200)
+
+    @model_validator(mode="after")
+    def distinct_decisions(self):
+        if len({item.decision_id for item in self.decisions}) != len(self.decisions):
+            raise ValueError("Select each decision only once")
+        return self
 
 
 class SourceRecordInput(Contract):

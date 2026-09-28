@@ -263,3 +263,137 @@ def test_http_state_and_read_only_progress_endpoint_agree(tmp_path, monkeypatch)
         state = client.get("/api/state", params={"campaign_id": created["id"]}).json()
         assert state["research_progress"] == direct.json()
         assert client.get("/api/campaigns/missing/research-progress").status_code == 404
+
+
+def parallel_review(workspace, campaign, *, phase="reviewing", statuses=("completed", "running", "running")):
+    request = {"id": "parallel_request", "campaign_id": campaign["id"], "status": "dispatched",
+        "research_run_id": "parallel_parent", "created_at": "2099-01-01T10:00:00+00:00",
+        "request": {"message": "Reassess the selected decisions against current evidence."}}
+    parent = {"id": request["research_run_id"], "campaign_id": campaign["id"], "status": "running",
+        "created_at": request["created_at"], "manager_command_id": request["id"],
+        "decision_review": {"phase": phase, "max_parallel_reviews": 3, "task_ids": []},
+        "context_snapshot": {"private_context": "must-not-be-projected"},
+        "request": {"provider_snapshot": {"model": "gpt-6-luna", "reasoning_effort": "low"},
+            "model_policy": {"roles": {"comparative_reviewer": {"model": "gpt-6-sol", "reasoning_effort": "xhigh"},
+                "research_synthesizer": {"model": "gpt-6-astra", "reasoning_effort": "xhigh"}}}}}
+    tasks = []
+    for index, status in enumerate(statuses):
+        run_id = f"parallel_child_{index}"
+        task = {"id": f"parallel_task_{index}", "campaign_id": campaign["id"], "parent_run_id": parent["id"],
+            "current_run_id": run_id, "role": "comparative_reviewer", "title": f"Review group {index}", "status": status,
+            "created_at": request["created_at"], "context_snapshot": {"private_context": "must-not-be-projected"}}
+        workspace.store.put("decision_review_task", task)
+        workspace.store.put("research_run", {"id": run_id, "campaign_id": campaign["id"],
+            "parent_review_run_id": parent["id"], "review_task_id": task["id"], "status": status,
+            "created_at": "2099-01-01T10:01:00+00:00", "current_role": "comparative_reviewer", "request": parent["request"]})
+        parent["decision_review"]["task_ids"].append(task["id"])
+        tasks.append(task)
+    workspace.store.put("research_run", parent)
+    workspace.store.put("manager_command", request)
+    return request, parent, tasks
+
+
+def test_parallel_review_shows_exact_child_workers_and_frozen_models_without_old_discovery_state(setup):
+    workspace, campaign = setup
+    session, _ = start(workspace, campaign)
+    session["status"] = "paused"
+    workspace.store.put("discovery_session", session)
+    request, parent, tasks = parallel_review(workspace, campaign)
+    workspace.research_threads[parent["id"]] = SimpleNamespace(is_alive=lambda: True)
+    for task in tasks[1:]:
+        workspace.research_threads[task["current_run_id"]] = SimpleNamespace(is_alive=lambda: True)
+        workspace.agent_log.record(campaign["id"], "provider.request", task_id=task["current_run_id"],
+            occurred_at="2099-01-01T10:01:01+00:00")
+        workspace.agent_log.record(campaign["id"], "runtime.liveness", task_id=task["current_run_id"],
+            occurred_at="2099-01-01T10:01:32+00:00")
+    before = workspace.store.list("decision_review_task", campaign["id"])
+    progress = view(workspace, campaign["id"])
+    assert progress["request"]["id"] == request["id"]
+    assert progress["status"] == "running" and progress["active"]
+    assert progress["session"] is None and not progress["can_resume"]
+    assert progress["task_counts"]["running"] == 2 and progress["task_counts"]["completed"] == 1
+    assert progress["task_counts"]["total"] == 3
+    assert all(agent["role"] == "comparative_reviewer" and agent["model"] == "gpt-6-sol"
+        and agent["reasoning_effort"] == "xhigh" for agent in progress["agents"])
+    assert sum(agent["active"] for agent in progress["agents"]) == 2
+    assert {agent["task_id"] for agent in progress["agents"]} == {task["id"] for task in tasks}
+    assert "must-not-be-projected" not in json.dumps(progress)
+    assert workspace.store.list("decision_review_task", campaign["id"]) == before
+    # The live parent supervisor alone is insufficient evidence of child liveness.
+    for task in tasks[1:]:
+        workspace.research_threads.pop(task["current_run_id"])
+    recovery = view(workspace, campaign["id"])
+    assert recovery["status"] == "blocked" and not recovery["active"]
+    assert sum(agent["wait_reason"] == "worker_recovery" for agent in recovery["agents"]) == 2
+
+
+def test_parallel_review_manager_consolidation_has_its_own_call_and_completion(setup):
+    workspace, campaign = setup
+    _, parent, _ = parallel_review(workspace, campaign, phase="synthesizing", statuses=("completed",) * 3)
+    workspace.research_threads[parent["id"]] = SimpleNamespace(is_alive=lambda: True)
+    workspace.agent_log.record(campaign["id"], "provider.request", task_id=parent["id"],
+        occurred_at="2099-01-01T10:01:00+00:00")
+    # A manager retry must not reuse an earlier call's activity or elapsed time.
+    workspace.agent_log.record(campaign["id"], "role_started", task_id=parent["id"],
+        occurred_at="2099-01-01T10:05:00+00:00")
+    progress = view(workspace, campaign["id"])
+    assert progress["headline"] == "Manager consolidating" and progress["status"] == "running"
+    assert not progress["active"]
+    manager = progress["agents"][0]
+    assert manager["task_id"] == parent["id"] and manager["role"] == "research_synthesizer"
+    assert manager["model"] == "gpt-6-astra" and manager["reasoning_effort"] == "xhigh"
+    assert manager["started_at"] == "2099-01-01T10:05:00+00:00"
+    assert manager["activity"] == "Preparing the next model call."
+    assert progress["task_counts"]["completed"] == 3 and progress["task_counts"]["running"] == 1
+    workspace.agent_log.record(campaign["id"], "provider.request", task_id=parent["id"],
+        occurred_at="2099-01-01T10:05:01+00:00")
+    assert view(workspace, campaign["id"])["active"]
+    parent["status"] = "awaiting_researcher"
+    parent["decision_review"]["phase"] = "completed"
+    workspace.store.put("research_run", parent)
+    completed = view(workspace, campaign["id"])
+    assert completed["status"] == "completed" and not completed["active"]
+    assert completed["task_counts"]["completed"] == 4 and completed["task_counts"]["running"] == 0
+    assert "No proposed work was approved" in completed["message"]
+
+
+def test_parallel_review_retry_hides_old_attempt_activity_and_keeps_reconciliation_distinct(setup):
+    workspace, campaign = setup
+    session, _ = start(workspace, campaign)
+    session["status"] = "exhausted"
+    workspace.store.put("discovery_session", session)
+    _, parent, tasks = parallel_review(workspace, campaign, phase="queued", statuses=("completed", "queued", "queued"))
+    for task in tasks[1:]:
+        workspace.agent_log.record(campaign["id"], "provider.error", task_id=task["current_run_id"], payload={"error": "timeout"})
+        workspace.research_threads[task["current_run_id"]] = SimpleNamespace(is_alive=lambda: True)
+    queued = view(workspace, campaign["id"])
+    assert queued["status"] == "queued" and not queued["active"]
+    assert queued["session"] is None and queued["retryable_task_ids"] == []
+    for agent in queued["agents"]:
+        if agent["status"] == "queued":
+            assert agent["started_at"] is None and agent["error_code"] is None and not agent["worker_active"]
+    tasks[1].update(status="needs_reconciliation", error="The provider call has uncertain delivery.")
+    tasks[2].update(status="failed", error="The reviewer response was invalid.")
+    parent["decision_review"]["phase"] = "partial"
+    parent["status"] = "partial"
+    workspace.store.put("research_run", parent)
+    for task in tasks[1:]:
+        workspace.store.put("decision_review_task", task)
+    partial = view(workspace, campaign["id"])
+    assert partial["status"] == "blocked" and not partial["active"]
+    assert partial["task_counts"]["waiting"] == 1 and partial["task_counts"]["failed"] == 1
+    assert partial["retryable_task_ids"] == []
+    assert partial["agents"][0]["wait_reason"] == "uncertain_provider"
+
+
+def test_new_discovery_session_supersedes_an_older_completed_parallel_review(setup):
+    workspace, campaign = setup
+    request, parent, _ = parallel_review(workspace, campaign, phase="completed", statuses=("completed",) * 3)
+    request.update(created_at="2020-01-01T00:00:00+00:00", status="completed")
+    parent["status"] = "completed"
+    workspace.store.put("manager_command", request)
+    workspace.store.put("research_run", parent)
+    session, _ = start(workspace, campaign)
+    progress = view(workspace, campaign["id"])
+    assert progress["request"] is None and progress["session"]["id"] == session["id"]
+    assert progress["status"] == "queued" and progress["task_counts"]["total"] == 3

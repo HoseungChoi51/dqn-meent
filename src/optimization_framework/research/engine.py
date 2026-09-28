@@ -24,7 +24,7 @@ from typing import Any, Callable, Literal, TypedDict
 
 import httpx
 from langgraph.graph import END, START, StateGraph
-from pydantic import BaseModel, ConfigDict, Field, ValidationError
+from pydantic import BaseModel, ConfigDict, Field, ValidationError, model_validator
 
 from optimization_framework.research.providers import provider_status, api_key as _api_key
 
@@ -155,6 +155,14 @@ class ActionProposal(_Strict):
     hypothesis_id: str | None = None
     task_id: str | None = None
     budget_calls: int | None = Field(default=None, ge=1)
+    requires_researcher: bool = Field(default=False,
+        description="True only when this action requires an explicit researcher decision before execution; delegated authority never overrides this flag.")
+    probe_scope: Literal["plan", "single_trial"] = Field(default="plan",
+        description="For kind=probe: single_trial is one fully specified, immediately executable numerical procedure. Conditional studies, tuning and multiseed comparisons are plans.")
+    algorithm: str | None = Field(default=None, min_length=1, max_length=100)
+    algorithm_config: dict[str, Any] | None = None
+    seed: int = Field(default=0, ge=0)
+    wall_seconds: float | None = Field(default=None, gt=0)
     expected_information: str
     stopping_condition: str
     alternatives: list[str] = Field(default_factory=list)
@@ -213,12 +221,52 @@ class MemoryUpdate(_Strict):
     source_ids: list[str] = Field(min_length=1, max_length=20)
 
 
+class ResearcherDecisionOption(_Strict):
+    id: str = Field(min_length=1, max_length=64, pattern=r"^[a-zA-Z][a-zA-Z0-9_-]*$")
+    label: str = Field(min_length=1, max_length=160)
+    description: str = Field(min_length=1, max_length=300)
+
+    @model_validator(mode="after")
+    def concrete_choice(self):
+        if self.id == "close_reserved":
+            raise ValueError("This option ID is reserved for provider reconciliation")
+        if not self.label.strip() or not self.description.strip():
+            raise ValueError("Decision choices require a concrete label and explanation")
+        if self.label.strip().casefold() in {"yes", "no", "proceed", "follow the proposed direction", "provide a different direction"}:
+            raise ValueError("Name the concrete direction instead of using a generic yes/no choice")
+        return self
+
+
+class ResearcherDecisionRequest(_Strict):
+    title: str = Field(min_length=1, max_length=180)
+    background: str = Field(min_length=1, max_length=600)
+    proposal: str = Field(min_length=1, max_length=600)
+    options: list[ResearcherDecisionOption] = Field(min_length=2, max_length=4)
+    recommendation: str = Field(min_length=1, max_length=64)
+    recommendation_reason: str = Field(min_length=1, max_length=400)
+
+    @model_validator(mode="after")
+    def distinct_options_and_recommendation(self):
+        if any(not getattr(self, key).strip() for key in ("title", "background", "proposal", "recommendation_reason")):
+            raise ValueError("A researcher decision needs its question, background, proposal and recommendation reason")
+        identities = [option.id for option in self.options]
+        labels = [option.label.strip().casefold() for option in self.options]
+        if len(set(identities)) != len(identities) or len(set(labels)) != len(labels):
+            raise ValueError("Decision options must have distinct IDs and labels")
+        if self.recommendation not in identities:
+            raise ValueError("The recommended choice must identify a supplied option")
+        return self
+
+
 class RoleResult(_Strict):
     analysis: str
     hypotheses: list[Proposal] = Field(default_factory=list, max_length=4)
     memory_updates: list[MemoryUpdate] = Field(default_factory=list, max_length=5)
     actions: list[ActionProposal] = Field(default_factory=list, max_length=6)
-    questions: list[str] = Field(default_factory=list, max_length=6)
+    questions: list[str] = Field(default_factory=list, max_length=6,
+        description="Internal questions for the campaign manager. Specialists do not address the researcher directly.")
+    decision_requests: list[ResearcherDecisionRequest] = Field(default_factory=list, max_length=3,
+        description="Only research_synthesizer may request researcher judgment: at most three distinct scientific-direction choices. These do not execute actions or change resource limits.")
     dissent: list[str] = Field(default_factory=list)
     next_roles: list[str] = Field(default_factory=list, max_length=3)
 
@@ -286,6 +334,12 @@ class LLMAdapter:
                   "Do not invent tool execution or verified papers. Generate at most one focused new strategy per role. "
                   "You work for the campaign manager. Use manager_context for durable guidance, decisions and retrieved evidence. "
                   "Only the manager's synthesis addresses the researcher; specialist questions are reports to the manager. "
+                  "Keep specialist questions internal and resolve operational questions from supplied records in the manager synthesis. "
+                  "Only research_synthesizer may use decision_requests for at most three genuinely distinct choices needing researcher judgment. "
+                  "Each needs a clear title, relevant background, one concrete proposal, meaningful option labels and descriptions, and a justified recommendation. "
+                  "Direction choices record scientific guidance only; they do not launch work, change budgets, or establish standing permissions. "
+                  "Never request a second approval of an action in decision_requests: actions receive their own exact, scoped approval cards. "
+                  "Consolidate related proposed work into coherent typed actions instead of producing repetitive approval requests. "
                   "When useful, propose concise memory_updates citing supplied record IDs. Label interpretations, preserve counterevidence, and never rewrite measurements. "
                   "An implement action commissions the independent implementation service, never proposal evolution. "
                   "For reuse provide an available implementation_version_id. For building provide implementation_spec (name, mechanism, acceptance_criteria, capabilities, exact dependencies, parameters and parameter_schema) and implementation_compute_seconds within the separate allocation. Unsupported gradients need an explicit capability decision. "
@@ -302,6 +356,11 @@ class LLMAdapter:
                   "The service supplies authority and current-context checks. Do not include an actor or invent evidence identifiers. "
                   + task_instructions
                   + "New code is built and validated by the implementation service. Use the declared problem descriptor, primary objective direction, and capabilities; do not assume binary candidates or optical efficiency. Specialized optimizers are valid. A universal optimizer is not a goal. "
+                  + "Actions must distinguish intent from executable work. Set requires_researcher=true whenever an action awaits a researcher decision. "
+                  + "A probe defaults to probe_scope='plan' and cannot launch. Use probe_scope='single_trial' only for ONE concrete, immediately executable numerical trial, "
+                  + "with a task_id, saved hypothesis_id or explicit algorithm, exact evaluation budget, seed and applicable configuration. "
+                  + "Conditional proposals, multiple configurations, multiple seeds and comparisons are plans; express their eventual individual procedures using the typed experiment commands. "
+                  + "Do not describe a multi-trial plan as a single probe or assume an unspecified optimizer becomes a random baseline. "
                   + " Output one JSON object matching this schema: "
                   + json.dumps(result_type.model_json_schema(), separators=(",", ":")))
         content = json.dumps(payload, ensure_ascii=False, separators=(",", ":"))
@@ -605,17 +664,29 @@ def _safe_context(context: dict) -> dict:
     # The coordinator resolves these exact saved notes and freezes them with the
     # run. Keep them in the safe context so they also participate in checkpoint
     # compatibility, rather than accepting model-authored feedback provenance.
-    for key in ("active_study", "problem_definitions", "available_methods", "validation_requirements", "reuse_decisions", "reference_evidence", "applicable_assets", "application_commands", "experiment_drafts", "historical_reproduction_sources", "reproduction_comparisons"):
+    for key in ("active_study", "problem_definitions", "available_methods", "validation_requirements", "reuse_decisions", "reference_evidence", "applicable_assets", "application_commands", "application_schema_definitions", "application_schema_reference_basis", "shared_trial_settings", "shared_trial_settings_basis", "decision_reference_basis", "experiment_drafts", "historical_reproduction_sources", "reproduction_comparisons"):
         if key in context:
             safe[key] = copy.deepcopy(context[key])
     if context.get("revision_context") is not None:
         safe["revision_context"] = copy.deepcopy(context["revision_context"])
+    if context.get("application_command_scope") is not None:
+        safe["application_command_scope"] = copy.deepcopy(context["application_command_scope"])
+    if context.get("decision_refresh") is not None:
+        safe["decision_refresh"] = copy.deepcopy(context["decision_refresh"])
+        for key in ("shared_decision_text", "decision_reference_basis", "application_command_scope"):
+            if key in context:
+                safe[key] = copy.deepcopy(context[key])
     if context.get("manager_context") is not None:
         safe["manager_context"] = copy.deepcopy(context["manager_context"])
     if context.get("implementation_readiness") is not None:
         safe["implementation_readiness"] = copy.deepcopy(context["implementation_readiness"])
     if context.get("available_implementations") is not None:
         safe["available_implementations"] = copy.deepcopy(context["available_implementations"])
+    if context.get("research_inventory") is not None:
+        inventory = copy.deepcopy(context["research_inventory"])
+        inventory["trials"] = [row for row in inventory.get("trials", []) if row.get("task_id") in task_ids
+            and not row.get("locked") and (_split(row) not in {"test", "heldout", "confirmation"} or row.get("confirmation_released"))]
+        safe["research_inventory"] = inventory
     for source in [*context.get("evidence_library", []), *(s for h in hypotheses for s in h.get("sources", []))]:
         if isinstance(source, dict) and not source.get("locked") and _split(source) not in {"test", "confirmation", "heldout"}:
             item = {k: copy.deepcopy(v) for k, v in source.items() if k in {"id", "title", "url", "excerpt", "verification", "supports"}}
@@ -636,6 +707,40 @@ def _action(kind: str, title: str, rationale: str, **extra: Any) -> dict:
 def _decide(question: str, rationale: str, options: list[str], **extra: Any) -> dict:
     return {"id": _identifier("decision"), "question": question, "title": question,
             "rationale": rationale, "options": options, "status": "pending", **extra}
+
+
+def _manager_decisions(answer: RoleResult, state: dict) -> list[dict]:
+    """Only the manager turns internal discussion into bounded user choices."""
+    normalize = lambda value: " ".join(str(value).casefold().split())
+    existing = {normalize(row.get("title", "")) for row in state["decisions"]}
+    remaining = max(0, 3 - sum(row.get("source_role") == "research_synthesizer" for row in state["decisions"]))
+    action_labels = {normalize(action.get(key, "")) for action in state["actions"] for key in ("title", "question")}
+    result = []
+    for request in answer.decision_requests:
+        title = normalize(request.title)
+        if not remaining or title in existing:
+            continue
+        if title in action_labels and normalize(request.proposal) in action_labels:
+            continue  # The exact proposed action already has its own approval.
+        result.append({"id": _identifier("decision"), **request.model_dump(), "status": "pending",
+            "context": request.background, "decision_format": "structured", "source_role": "research_synthesizer",
+            "audience": "researcher", "scope_label": "Research direction in this campaign; does not launch work or change limits."})
+        existing.add(title)
+        remaining -= 1
+    # Older providers may still emit string questions. Preserve the manager's
+    # actual question without inventing what either a yes or a no would mean.
+    for question in answer.questions:
+        title = normalize(question)
+        if not remaining or not title or title in existing or title in action_labels:
+            continue
+        result.append({"id": _identifier("decision"), "title": question, "question": question,
+            "background": answer.analysis, "context": answer.analysis, "proposal": "", "options": [],
+            "recommendation": None, "recommendation_reason": "", "status": "pending",
+            "needs_clarification": True, "decision_format": "legacy_question", "source_role": "research_synthesizer",
+            "audience": "manager", "scope_label": "The manager must clarify this internal follow-up before requesting a researcher decision."})
+        existing.add(title)
+        remaining -= 1
+    return result
 
 
 def _slow_start_decisions(context: dict) -> list[dict]:
@@ -824,6 +929,10 @@ def run_research(request: dict, context: dict, emit: Callable[[dict], None] | No
     }
     sources = {s["id"]: s for s in context["evidence_library"] if "id" in s}
     existing_ids = {h.get("id") for h in context["hypotheses"]}
+    # The bounded inventory retains saved proposal identities even when their
+    # full scientific records need retrieval. Keep explicit lineage to those
+    # supplied proposals without admitting model-invented parent identifiers.
+    existing_ids.update(h["id"] for h in context.get("research_inventory", {}).get("proposals", []) if h.get("id"))
     revision_target = (request.get("hypothesis_id")
                        if request.get("mode") == "evolve" and request.get("hypothesis_id") in existing_ids else None)
     task_ids = {t.get("id", t.get("task_id")) for t in context["tasks"]}
@@ -889,13 +998,14 @@ def run_research(request: dict, context: dict, emit: Callable[[dict], None] | No
                 action = proposal.model_dump()
                 if action["task_id"] is not None and action["task_id"] not in task_ids:
                     continue
-                action.update(id=_identifier("action"), status="proposed", requires_researcher=True)
+                action.update(id=_identifier("action"), status="proposed")
                 updated["actions"].append(action)
-            for question in answer.questions:
-                updated["decisions"].append(_decide(question, answer.analysis, ["Follow the proposed direction", "Provide a different direction"]))
             # Explicit, bounded dynamic routing: a role may request a missing
             # activity or one repeat. Researcher modes only choose the entry path.
-            for next_role in answer.next_roles:
+            # Explicit reconsideration is a bounded reviewer→manager turn.
+            # Preserve its reserved synthesis call even if a specialist asks
+            # for unrelated work; new work must return for researcher review.
+            for next_role in ([] if context.get("decision_refresh") else answer.next_roles):
                 if next_role in ROLES and next_role not in updated["queue"] and updated["completed"].count(next_role) < 2:
                     if "research_synthesizer" in updated["queue"] and next_role != "research_synthesizer":
                         updated["queue"].insert(updated["queue"].index("research_synthesizer"), next_role)
@@ -909,6 +1019,22 @@ def run_research(request: dict, context: dict, emit: Callable[[dict], None] | No
     builder.add_conditional_edges(START, lambda s: "research_role" if s["queue"] else END)
     builder.add_conditional_edges("research_role", lambda s: "research_role" if s["queue"] else END)
     final = builder.compile().invoke(state, config={"recursion_limit": 48})
+    # Specialists and the manager may repeat an identical proposal. Preserve
+    # their original role responses, but ask for the exact action only once.
+    unique_actions, action_signatures = [], set()
+    for action in final["actions"]:
+        signature = json.dumps({key: value for key, value in action.items() if key not in {"id", "status"}}, sort_keys=True)
+        if signature not in action_signatures:
+            unique_actions.append(action)
+            action_signatures.add(signature)
+    final["actions"] = unique_actions
+    manager_results = [row for row in final["role_results"] if row["role"] == "research_synthesizer"]
+    last_step = final["trace"][-1] if final["trace"] else {}
+    if manager_results and last_step.get("role") == "research_synthesizer" and last_step.get("status") == "completed":
+        # Intermediate synthesis is still internal when the manager asks for
+        # further research. Only its last completed response requests choices.
+        answer = RoleResult(**{key: value for key, value in manager_results[-1].items() if key != "role"})
+        final["decisions"].extend(_manager_decisions(answer, final))
     if final["status"] == "running":
         final["status"] = "awaiting_researcher" if final["decisions"] else "completed"
     summaries = [r["analysis"] for r in final["role_results"] if r["role"] == "research_synthesizer"]

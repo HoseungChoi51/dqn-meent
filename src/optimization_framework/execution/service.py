@@ -60,6 +60,8 @@ class Workspace:
         self.thread = None
         self.processes = {}
         self.last_progress = {}
+        from optimization_framework.execution.metrics import MetricProjectionCache
+        self._metric_projections = MetricProjectionCache()
         self.research_threads = {}
         self.source_threads = {}
         self.on_trial_finished = None
@@ -236,6 +238,8 @@ class Workspace:
             nomination = self.store.get(request.nomination_id, "nomination") if request.nomination_id else None
             if nomination and nomination["campaign_id"] != campaign_id:
                 raise ValueError("Nomination belongs to another campaign")
+            from optimization_framework.analysis.finalists import confirmation_selection
+            finalist_selection = confirmation_selection(self.store, campaign_id, request)
             methods, prototypes = {}, {}
             prototype_ids = [*request.prototype_trial_ids, *((nomination or {}).get("prototypes", {}).values())]
             for trial_id in dict.fromkeys(prototype_ids):
@@ -289,6 +293,10 @@ class Workspace:
             entries = [("study", {**record, "content_hash": content_hash(record)}, "study.created")]
             if protocol:
                 entries.append(("confirmation_protocol", {**protocol.model_dump(mode="json"), "content_hash": protocol.digest()}, "confirmation.frozen"))
+            if finalist_selection:
+                binding = {"id": "finalists_for_" + study_id, "campaign_id": campaign_id, "study_id": study_id,
+                    "protocol_id": protocol.id, **finalist_selection, "created_at": now()}
+                entries.append(("finalist_confirmation_binding", {**binding, "content_hash": content_hash(binding)}, "finalist.confirmation_bound"))
             campaign.update(active_study_id=study_id, version=campaign["version"] + 1, updated_at=now())
             charter = {**campaign, "id": identifier("charter"), "campaign_id": campaign_id, "tasks": self.current_tasks(campaign_id)}
             self.store.put_many([*entries, ("campaign", campaign, "campaign.study_changed"), ("charter", charter, None)])
@@ -1306,9 +1314,11 @@ class Workspace:
             except Exception as exc:
                 self.store.event(None, "service.error", {"message": str(exc)})
 
-    def metrics(self, trial_id):
+    def metrics(self, trial_id, *, fields=None):
         self.store.get(trial_id, "trial")
         path = self.job_dir(trial_id) / "metrics.jsonl"
+        if fields is not None:
+            return self._metric_projections.read(path, fields)
         if not path.exists():
             return []
         rows = []

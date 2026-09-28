@@ -14,8 +14,8 @@ from optimization_framework.contracts.bundles import BundleExportInput, BundleIn
 from optimization_framework.contracts.commands import EvaluatorCommissionInput, EvaluatorAttachInput, ImplementationControlInput, WaiverRevocationInput, RevalidationInput, ExecutableReuseInput, RuntimeResolutionInput
 from optimization_framework.contracts.commands import CampaignUpdateInput, ContextEditInput, IssueResolveInput, TrialControlInput, TrialValidationInput
 from optimization_framework.contracts.commands import HypothesisReviewInput, HypothesisStatusInput, HypothesisNominateInput
-from optimization_framework.contracts.commands import ResearchControlInput, DecisionResolveInput, SourceRecordInput, SourceIngestInput
-from optimization_framework.contracts.commands import InferenceRunInput
+from optimization_framework.contracts.commands import ResearchControlInput, ResearchRetryInput, DecisionResolveInput, DecisionRefreshInput, SourceRecordInput, SourceIngestInput
+from optimization_framework.contracts.commands import InferenceRunInput, FinalistSetInput
 from optimization_framework.contracts.manager import ContextImportInput
 
 
@@ -92,14 +92,15 @@ class CommandService:
             "reproduction.draft": ReproductionDraftInput, "reproduction.compare": ReproductionCompareInput,
             "bundle.export": BundleExportInput, "bundle.inspect": BundleInspectInput, "bundle.publish": BundlePublishInput,
             "cost.reconcile": CostReconcileInput,
-            "study.create": StudyInput, "study.nominate": NominateInput, "validation.run": RecipeInput,
+            "study.create": StudyInput, "study.nominate": NominateInput, "finalist.set": FinalistSetInput, "validation.run": RecipeInput,
             "study.freeze_template": TemplateFreezeInput, "study.activate": ExecutionInput,
             "validation.require": RecipeInput, "validation.execute": ExecuteValidationInput, "validation.waive": WaiverInput,
             "validation.revoke_waiver": WaiverRevocationInput,
             "asset.reuse": ReuseInput, "finding.record": FindingInput, "implementation.commission": CommissionInput,
             "asset.import_reference_set": ReferenceImportInput,
             "implementation.attach": AttachInput, "research.start": ResearchInput, "literature.search": SearchInput,
-            "research.control": ResearchControlInput, "decision.resolve": DecisionResolveInput,
+            "research.control": ResearchControlInput, "research.retry": ResearchRetryInput,
+            "decision.resolve": DecisionResolveInput, "decision.refresh": DecisionRefreshInput,
             "source.record": SourceRecordInput, "source.ingest": SourceIngestInput,
             "evaluator.commission": EvaluatorCommissionInput, "evaluator.attach": EvaluatorAttachInput, "implementation.control": ImplementationControlInput,
             "implementation.revalidate": RevalidationInput,
@@ -458,9 +459,11 @@ class CommandService:
                 "status": "pending", "created_at": now()}
             self.store.put("outbox", effect, "effect.queued")
             return {"manager_command_id": effect["manager_command_id"], "effect_id": effect["id"]}
-        if command.operation in {"research.control", "decision.resolve"}:
+        if command.operation in {"research.control", "research.retry", "decision.resolve", "decision.refresh"}:
             from optimization_framework.campaigns import research_commands
-            handler = research_commands.control if command.operation == "research.control" else research_commands.resolve
+            handler = {"research.control": research_commands.control, "research.retry": research_commands.retry,
+                       "decision.resolve": research_commands.resolve,
+                       "decision.refresh": research_commands.refresh}[command.operation]
             return handler(self.workspace, command)
         if command.operation == "source.record":
             values = SourceRecordInput(**payload).model_dump(exclude={"schema_version"})
@@ -501,6 +504,11 @@ class CommandService:
             values = NominateInput(**payload)
             self._target(command, "study_id", "study")
             return {"nomination_id": nominate(self.workspace, values.study_id, authority=actor, expected_evidence_hash=values.expected_evidence_hash)["id"]}
+        if command.operation == "finalist.set":
+            from optimization_framework.analysis.finalists import set_selection
+            record = set_selection(self.workspace, command.campaign_id, FinalistSetInput(**payload), command_id=command.id)
+            return {"finalist_selection_id": record["id"], "revision": record["revision"],
+                "trial_ids": record["trial_ids"], "prototype_trial_ids": record["prototype_trial_ids"]}
         if command.operation in {"validation.run", "validation.require"}:
             trial = self._target(command, "trial_id", "trial")
             payload.pop("trial_id")

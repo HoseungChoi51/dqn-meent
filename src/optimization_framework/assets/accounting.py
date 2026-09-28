@@ -127,32 +127,47 @@ def reconcile(catalog, source_id, stop, quantities, *, evidence_ids, authority, 
         return catalog.store.put_immutable("cost_reconciliation", record, "cost.reconciled")
 
 
+class CostProjection:
+    """Source indices and exact equations reusable only within a read snapshot."""
+
+    def __init__(self, events, reconciliations, *, cache_equations=True):
+        self.sources, self.receipts = defaultdict(list), defaultdict(list)
+        for event in events:
+            self.sources[event["source_id"]].append(event)
+        for record in reconciliations:
+            self.receipts[record["source_id"]].append(record)
+        self.equations = {}
+        self.cache_equations = cache_equations
+
+    def project(self, intervals, axes, *, unknown_provenance=0):
+        quantities = {}
+        for axis in axes:
+            known, unknown = 0., 0
+            for source, ranges in intervals.items():
+                key = (source, axis)
+                equations = self.equations.get(key)
+                if equations is None:
+                    equations = Equations(self.sources[source], self.receipts[source], axis)
+                    if self.cache_equations:
+                        self.equations[key] = equations
+                subtotal, exact = equations.project(ranges)
+                known += subtotal
+                if not exact:
+                    required = sum(stop - start for start, stop in ranges)
+                    resolved = sum(equations.position(event["ordinal"])[0] == equations.position(event["ordinal"] + 1)[0]
+                        for event in self.sources[source] if any(start <= event["ordinal"] < stop for start, stop in ranges))
+                    unknown += max(1, required - resolved)
+            quantities[axis] = {"known": known, "unknown_events": unknown, "unknown_provenance": unknown_provenance,
+                                "total": None if unknown or unknown_provenance else known}
+        status = "complete" if all(value["total"] is not None for value in quantities.values()) else (
+            "partial" if any(value["known"] or value["total"] is not None for value in quantities.values()) else "unknown")
+        return quantities, {"status": status, "axes": list(axes),
+            "reconciliation_ids": sorted(record["id"] for source in intervals for record in self.receipts[source])}
+
+
 def project(events, reconciliations, intervals, axes, *, unknown_provenance=0):
-    sources, receipts = defaultdict(list), defaultdict(list)
-    for event in events:
-        if event["source_id"] in intervals:
-            sources[event["source_id"]].append(event)
-    for record in reconciliations:
-        if record["source_id"] in intervals:
-            receipts[record["source_id"]].append(record)
-    quantities = {}
-    for axis in axes:
-        known, unknown = 0., 0
-        for source, ranges in intervals.items():
-            equations = Equations(sources[source], receipts[source], axis)
-            subtotal, exact = equations.project(ranges)
-            known += subtotal
-            if not exact:
-                required = sum(stop - start for start, stop in ranges)
-                resolved = sum(equations.position(event["ordinal"])[0] == equations.position(event["ordinal"] + 1)[0]
-                    for event in sources[source] if any(start <= event["ordinal"] < stop for start, stop in ranges))
-                unknown += max(1, required - resolved)
-        quantities[axis] = {"known": known, "unknown_events": unknown, "unknown_provenance": unknown_provenance,
-                            "total": None if unknown or unknown_provenance else known}
-    status = "complete" if all(value["total"] is not None for value in quantities.values()) else (
-        "partial" if any(value["known"] or value["total"] is not None for value in quantities.values()) else "unknown")
-    return quantities, {"status": status, "axes": list(axes),
-                        "reconciliation_ids": sorted(record["id"] for rows in receipts.values() for record in rows)}
+    return CostProjection(events, reconciliations, cache_equations=False).project(
+        intervals, axes, unknown_provenance=unknown_provenance)
 
 
 def sources(catalog, asset_id):

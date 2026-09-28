@@ -88,8 +88,8 @@ class CampaignMemory:
             return issue
 
     def _records(self, campaign_id):
-        kinds = ("campaign", "task", "hypothesis", "trial", "decision", "action", "message", "source", "source_retrieval", "manager_note", "manager_issue", "manager_input", "manager_command", "implementation_grant",
-                 "study", "nomination", "budget_amendment", "campaign_budget_amendment", "validation_requirement", "validation_result", "waiver", "waiver_revocation",
+        kinds = ("campaign", "task", "hypothesis", "trial", "decision", "decision_refresh", "action", "message", "source", "source_retrieval", "manager_note", "manager_issue", "manager_input", "manager_command", "implementation_grant",
+                 "study", "nomination", "finalist_selection", "finalist_confirmation_binding", "budget_amendment", "campaign_budget_amendment", "validation_requirement", "validation_result", "waiver", "waiver_revocation",
                  "confirmation_protocol", "confirmation_release", "confirmation_report", "execution_attempt", "diagnostic_grant", "reuse_decision", "asset", "work_command", "command_rejection", "outbox",
                  "experiment_draft", "draft_launch", "reproduction_comparison", "study_execution", "study_activation", "confirmation_design",
                  "protocol_cell", "method_binding", "cell_launch", "execution_grant", "execution_grant_release",
@@ -153,6 +153,16 @@ class CampaignMemory:
 
     @staticmethod
     def _text(kind, item):
+        if kind == "finalist_selection":
+            from optimization_framework.analysis.finalists import summary
+            return json.dumps({"kind": kind, **summary(item)}, ensure_ascii=False)
+        if kind == "decision_refresh":
+            return json.dumps({"kind": kind, **{key: item.get(key) for key in
+                ("id", "manager_command_id", "requested_charter_version", "requested_guidance_revision", "comment")},
+                "decisions": [{"decision_id": row["decision"]["id"],
+                    "action_id": (row.get("action") or {}).get("id"),
+                    "desired_choice": row.get("desired_choice"), "comment": row.get("comment", "")}
+                    for row in item["decisions"]]}, ensure_ascii=False)
         if kind == "work_command":
             # Historical reply snapshots are for caller reconciliation. Manager
             # retrieval reads scientific evidence through its own visible records.

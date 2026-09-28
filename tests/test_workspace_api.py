@@ -216,7 +216,10 @@ def test_targeted_agent_work_saves_critiques_and_never_launches_delegated_trials
               "research_state": {"role_results": [{"role": "assumption_reviewer", "analysis": "Locality needs evidence; compare against arbitrary moves."}]},
               "actions": [{"id": identifier("action"), "kind": "probe", "title": "A suggested locality check",
                            "rationale": "Distinguish locality from general coordinated moves.", "task_id": tasks[0]["id"],
-                           "hypothesis_id": parent["id"], "algorithm": "random", "budget_calls": 8}]}
+                           # Even a complete, bounded probe remains an approval request in targeted work.
+                           "hypothesis_id": parent["id"], "algorithm": parent["algorithm"], "budget_calls": 8,
+                           "probe_scope": "single_trial", "seed": 17, "wall_seconds": 5,
+                           "question": "Does locality improve this method over arbitrary moves?"}]}
     monkeypatch.setattr("dqn_meent.workspace.research.run_research", lambda *args: result)
     coordinator._run(run_id)
     run = store.get(run_id, "research_run")

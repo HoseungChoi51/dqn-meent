@@ -25,11 +25,11 @@ def _records(store, kind, campaign_id, fields):
     return [json.loads(row[0]) for row in rows]
 
 
-def _latest_provider_events(store, campaign_id, task_ids):
+def _latest_provider_events(store, campaign_id, task_ids, event_types=PROVIDER_EVENTS):
     if not task_ids:
         return {}
     placeholders = ",".join("?" for _ in task_ids)
-    event_placeholders = ",".join("?" for _ in PROVIDER_EVENTS)
+    event_placeholders = ",".join("?" for _ in event_types)
     with store.connection() as db:
         rows = db.execute(f"""
             SELECT task_id,attempt_id,event_type,occurred_at,summary,error_code,error_message,timeout_seconds FROM (
@@ -46,7 +46,7 @@ def _latest_provider_events(store, campaign_id, task_ids):
                     AND json_extract(body,'$.task_id') IN ({placeholders})
                     AND json_extract(body,'$.event_type') IN ({event_placeholders})
             ) WHERE rank=1
-        """, (campaign_id, *task_ids, *PROVIDER_EVENTS)).fetchall()
+        """, (campaign_id, *task_ids, *event_types)).fetchall()
     return {row["task_id"]: dict(row) for row in rows}
 
 
@@ -150,6 +150,95 @@ def _agent(workspace, campaign_id, session, task, run, attempt, event):
             "active": provider_active, "worker_active": alive}
 
 
+def _decision_review_view(workspace, campaign_id, request, parent, runs):
+    """Project reviewer attempts independently of the discovery scheduler."""
+    review = parent["decision_review"]
+    phase = review.get("phase", "queued")
+    members = set(review.get("task_ids", []))
+    records = _records(workspace.store, "decision_review_task", campaign_id,
+        ("id", "parent_run_id", "current_run_id", "role", "title", "status", "created_at", "finished_at", "error"))
+    records = [row for row in records if row["parent_run_id"] == parent["id"] and row["id"] in members]
+    tasks = []
+    for row in records:
+        queued = row["status"] == "queued"
+        uncertain = row["status"] == "needs_reconciliation"
+        tasks.append({**row, "legacy": True, "run_id": None if queued else row.get("current_run_id"),
+            "status": "waiting" if uncertain else "cancelled" if row["status"] == "stopped" else row["status"],
+            "wait_reason": "uncertain_provider" if uncertain else None,
+            "brief": {"role": row["role"], "stage": "decision_review"}})
+    # The supervisor is not another model worker during the reviewer phase.
+    # Include it only when the final manager call is relevant to this attempt.
+    if phase in {"synthesizing", "completed"} or (
+            phase in {"partial", "failed", "stopped"} and records and all(row["status"] == "completed" for row in records)):
+        uncertain = parent["status"] == "needs_reconciliation"
+        manager_status = "completed" if phase == "completed" else "running" if phase == "synthesizing" else "failed"
+        tasks.append({"id": parent["id"], "run_id": parent["id"], "legacy": True,
+            "status": "waiting" if uncertain else "cancelled" if phase == "stopped" else manager_status,
+            "wait_reason": "uncertain_provider" if uncertain else None,
+            "created_at": parent.get("created_at"), "finished_at": parent.get("finished_at"), "error": parent.get("error"),
+            "brief": {"role": "research_synthesizer", "stage": "manager_consolidation"}})
+    run_ids = [task["run_id"] for task in tasks if task.get("run_id")]
+    events = _latest_provider_events(workspace.store, campaign_id, run_ids)
+    starts = _latest_provider_events(workspace.store, campaign_id, run_ids, ("role_started",))
+    agents = []
+    for task in tasks:
+        run = runs.get(task.get("run_id")) or parent
+        event = events.get(task.get("run_id"))
+        started = (starts.get(task.get("run_id")) or {}).get("occurred_at")
+        if started and event and (event.get("occurred_at") or "") < started:
+            event = None
+        agent = _agent(workspace, campaign_id, None, task, run, None, event)
+        if started:
+            agent["started_at"] = started
+            agent["last_activity_at"] = max(started, agent["last_activity_at"] or started)
+        if task["status"] == "queued":
+            # Retry retains the old child ID on the durable task. It must not
+            # reuse that old attempt's elapsed time, error or provider heartbeat.
+            agent.update(started_at=None, active=False, worker_active=False, error_code=None)
+            agent["activity"] = "Reviewer group queued; waiting for a slot in this reassessment."
+        agents.append(agent)
+    counts = {key: sum(task["status"] == key for task in tasks) for key in TASK_STATUSES}
+    counts["total"] = len(tasks)
+    completed = sum(row["status"] == "completed" for row in records)
+    summary = f"{completed} of {len(records)} reviewer groups complete."
+    alive = any(agent["worker_active"] for agent in agents)
+    active = any(agent["active"] for agent in agents)
+    recovery = any(agent["wait_reason"] in {"worker_recovery", "uncertain_provider"} for agent in agents)
+    if alive:
+        status = "running"
+        headline = "Manager consolidating" if phase == "synthesizing" else "Reviewers reassessing decisions"
+        message = summary + (" The campaign manager is reconciling the saved reports before publishing current requests."
+            if phase == "synthesizing" else " Each reviewer has a separate call and saved report; the manager synthesizes after they finish.")
+    elif recovery:
+        status, headline = "blocked", "Decision review needs attention"
+        message = summary + " A reviewer or manager call needs recovery or provider reconciliation. Saved reports are retained."
+    elif request["status"] == "waiting_provider":
+        status, headline = "blocked", "Waiting for a model provider"
+        message = summary + " Configure and enable the model provider before reassessment can continue."
+    elif phase == "completed":
+        status, headline = "completed", "Manager review complete"
+        message = summary + " Review the manager's synthesis and any current requests in the decision inbox. No proposed work was approved by reassessment."
+    elif phase == "stopped":
+        status, headline = "waiting", "Decision review stopped"
+        message = summary + " Completed reports remain saved. Review the interruption in the decision inbox."
+    elif phase in {"partial", "failed"}:
+        status, headline = "failed", "Decision review needs attention"
+        message = summary + " Completed reports remain saved. The decision inbox shows whether unfinished calls can be retried."
+    else:
+        status, headline = "queued", "Decision reassessment queued"
+        message = summary + " Reviewer groups are waiting for dispatch; no model call is active yet."
+    priority = {"running": 0, "waiting": 1, "queued": 2, "blocked": 3, "failed": 4}
+    agents.sort(key=lambda agent: priority.get(agent["status"], 5))
+    stamps = [agent["last_activity_at"] for agent in agents]
+    stamps.extend([parent.get("created_at"), parent.get("finished_at"), request.get("created_at")])
+    return {"status": status, "headline": headline, "message": message, "active": active,
+        "session": None, "can_resume": False, "retryable_task_ids": [],
+        "request": {"id": request["id"], "message": (request.get("request") or {}).get("message", "")[:1500],
+                    "created_at": request.get("created_at"), "status": request["status"]},
+        "agents": agents[:8], "task_counts": counts,
+        "updated_at": max((stamp for stamp in stamps if stamp), default=None)}
+
+
 def view(workspace, campaign_id):
     """Project durable state and local worker liveness without changing either."""
     store = workspace.store
@@ -158,6 +247,9 @@ def view(workspace, campaign_id):
         ("id", "request", "created_at", "status", "discovery_task_id", "research_run_id", "wait_reason", "error", "automatic"))
     requests = [row for row in requests if not row.get("automatic")]
     request = max(requests, key=lambda row: row.get("created_at") or "", default=None)
+    runs = _records(store, "research_run", campaign_id,
+        ("id", "status", "request", "created_at", "finished_at", "current_role", "manager_command_id", "error", "usage.pending_reservation", "decision_review"))
+    parent = next((run for run in runs if request and run["id"] == request.get("research_run_id") and run.get("decision_review")), None)
     sessions = _records(store, "discovery_session", campaign_id,
         ("id", "status", "control_revision", "created_at", "updated_at", "policy"))
     session = next((row for row in reversed(sessions) if row["status"] not in SESSION_TERMINAL), sessions[-1] if sessions else None)
@@ -172,9 +264,11 @@ def view(workspace, campaign_id):
         # A new session has its own initial analysis agenda. An older request
         # from a previous session must not hide those agents behind an empty scope.
         request = None
+    if parent and request:
+        # A paused/exhausted historical discovery session does not supervise a
+        # direct decision reassessment and must not hide its live reviewer calls.
+        return _decision_review_view(workspace, campaign_id, request, parent, {run["id"]: run for run in runs})
     tasks = _scope(tasks, request)
-    runs = _records(store, "research_run", campaign_id,
-        ("id", "status", "request", "created_at", "finished_at", "current_role", "manager_command_id", "error", "usage.pending_reservation"))
     if not tasks and request and request.get("research_run_id"):
         legacy = next((run for run in runs if run["id"] == request["research_run_id"]), None)
         if legacy and not request.get("discovery_task_id"):

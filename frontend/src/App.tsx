@@ -35,14 +35,35 @@ export default function App() {
   const [toast, setToast] = useState(''), [updatedAt, setUpdatedAt] = useState<Date | null>(null);
   const mounted = useRef(true), requestId = useRef(0), toastTimer = useRef<ReturnType<typeof setTimeout>>(undefined);
   const latestState = useRef<State>(emptyState);
-  const refresh = useCallback(async () => {
+  const selectedCampaign = useRef(campaignId);
+  selectedCampaign.current = campaignId;
+  const refreshing = useRef<{ campaignId: string; promise: Promise<void>; followup: Promise<void> | null } | null>(null);
+  const refresh = useCallback((options: { background?: boolean } = {}): Promise<void> => {
+    if (!mounted.current || selectedCampaign.current !== campaignId) return Promise.resolve();
+    const active = refreshing.current;
+    if (active?.campaignId === campaignId) {
+      // Polls share the current read. A user action or event needs a read that
+      // starts after that read, which may have captured pre-command state.
+      if (options.background) return active.promise;
+      if (!active.followup) active.followup = active.promise.then(() => {
+        if (mounted.current && selectedCampaign.current === campaignId) return refresh({ background: true });
+      });
+      return active.followup;
+    }
     const request = ++requestId.current;
-    try {
-      const data = await api<State>(`/api/state${campaignId ? `?campaign_id=${encodeURIComponent(campaignId)}` : ''}`);
-      if (mounted.current && request === requestId.current) { latestState.current = { ...emptyState, ...data, campaign: data.campaign ? { ...data.campaign, compute_used_seconds: data.budget?.spent_seconds ?? data.campaign.compute_used_seconds, llm_used_usd: data.budget?.llm_spent_usd ?? data.campaign.llm_used_usd } : null }; setState(latestState.current); setError(''); setUpdatedAt(new Date()); setLoading(false); }
-    } catch (e) { if (mounted.current && request === requestId.current) { setError(errorText(e)); setLoading(false); } }
+    const flight = { campaignId, promise: Promise.resolve(), followup: null as Promise<void> | null };
+    refreshing.current = flight;
+    const current = () => mounted.current && selectedCampaign.current === campaignId && request === requestId.current;
+    flight.promise = (async () => {
+      try {
+        const data = await api<State>(`/api/state${campaignId ? `?campaign_id=${encodeURIComponent(campaignId)}` : ''}`);
+        if (current()) { latestState.current = { ...emptyState, ...data, campaign: data.campaign ? { ...data.campaign, compute_used_seconds: data.budget?.spent_seconds ?? data.campaign.compute_used_seconds, llm_used_usd: data.budget?.llm_spent_usd ?? data.campaign.llm_used_usd } : null }; setState(latestState.current); setError(''); setUpdatedAt(new Date()); setLoading(false); }
+      } catch (e) { if (current()) { setError(errorText(e)); setLoading(false); } }
+      finally { if (refreshing.current === flight) refreshing.current = null; }
+    })();
+    return flight.promise;
   }, [campaignId]);
-  useEffect(() => { mounted.current = true; void refresh(); const interval = window.setInterval(refresh, 6000); return () => { mounted.current = false; window.clearInterval(interval); }; }, [refresh]);
+  useEffect(() => { mounted.current = true; void refresh({ background: true }); const interval = window.setInterval(() => void refresh({ background: true }), 6000); return () => { mounted.current = false; window.clearInterval(interval); }; }, [refresh]);
   useEffect(() => {
     let pending: ReturnType<typeof setTimeout> | undefined;
     const stream = new EventSource('/api/events');

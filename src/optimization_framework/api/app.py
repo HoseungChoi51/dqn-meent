@@ -387,6 +387,9 @@ def create_app(directory=None, max_workers=2, start_workers=True, implementation
                 from optimization_framework.research.discovery.proposals import readiness as proposal_readiness
                 rows = [{**h, "implementation_readiness": workspace.implementations.readiness(h),
                          "concept_review": proposal_readiness(workspace.store, h)} for h in rows]
+            if kind == "decision":
+                from optimization_framework.campaigns.decisions import public_decision
+                rows = [public_decision(workspace, row) for row in rows]
             response[name] = rows
         response["research_runs"] = [coordinator.public_run(r) for r in workspace.store.list("research_run", current)] if current else []
         from optimization_framework.research.progress import view as progress_view
@@ -408,6 +411,7 @@ def create_app(directory=None, max_workers=2, start_workers=True, implementation
         response["study_executions"] = workspace.store.list("study_execution", current) if current else []
         response["nominations"] = [{key: item[key] for key in ("id", "study_id", "rule", "evidence_hash", "result", "selected_method_ids", "prototypes", "created_at")}
             for item in workspace.store.list("nomination", current)] if current else []
+        response["finalist_selections"] = workspace.store.list("finalist_selection", current) if current else []
         response["diagnostic_grants"] = [{**{key: grant.get(key) for key in
             ("id", "parent_trial_id", "status", "count", "reserved_seconds", "asset_ids", "trial_ids")},
             "unit": grant["schedule"]["unit"]} for grant in workspace.store.list("diagnostic_grant", current)] if current else []

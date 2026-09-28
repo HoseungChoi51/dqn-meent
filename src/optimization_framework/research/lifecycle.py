@@ -40,7 +40,11 @@ def reconciliation(workspace, run):
 
 def recover(workspace):
     """Only proven unsent work or saved results can recover automatically."""
+    from .decision_review import recover as recover_decision_reviews
+    recover_decision_reviews(workspace)
     for run in workspace.store.list("research_run"):
+        if run.get("decision_review") or run.get("parent_review_run_id"):
+            continue
         if run.get("discovery_task_id"):
             continue  # Discovery owns task/step recovery; never replay the legacy graph.
         if run["status"] not in {"running", "stopping"} and not (
@@ -97,14 +101,19 @@ def finalize(coordinator, run_id, saved):
         from optimization_framework.campaigns.commands import DELEGATED
         dispatched = False
         for action in result.get("actions", []):
+            if run.get("decision_refresh_id"):
+                action.update(requires_researcher=True, decision_refresh_id=run["decision_refresh_id"])
             action.update(campaign_id=run["campaign_id"], charter_version=run["charter_version"],
                 research_run_id=run_id, created_at=now(), guidance_revision=run.get("guidance_revision", 0),
                 authority_hash=workspace.commands.authority_hash(run["context_snapshot"]["campaign"]))
             routine = action["kind"] in {"probe", "implement", "search", "compare"} or (
                 action["kind"] == "command" and action.get("command_operation") in DELEGATED)
+            from optimization_framework.research.action_policy import probe_execution_issue
+            design_issue = probe_execution_issue(action, autonomous=True) if action["kind"] == "probe" else None
             eligible = (campaign["autonomy"] == "delegated" and not dispatched and not result.get("decisions")
                 and not (request.get("hypothesis_id") and request.get("mode") in {"review", "evolve"})
-                and not stale and not stopped and routine and not (result.get("usage") or {}).get("pending_reservation"))
+                and not stale and not stopped and routine and not action.get("requires_researcher") and not design_issue
+                and not (result.get("usage") or {}).get("pending_reservation"))
             if eligible:
                 effect = {"id": "dispatch_" + action["id"], "campaign_id": run["campaign_id"],
                     "kind": "manager_action", "action_id": action["id"], "run_id": run_id,
@@ -113,12 +122,22 @@ def finalize(coordinator, run_id, saved):
                 dispatched = True
             elif stale or stopped:
                 action["status"] = "needs_reconsideration" if stale else "deferred"
+            elif design_issue and not action.get("requires_researcher"):
+                # A missing procedure is a manager design task, not a request to
+                # approve an ambiguous plan that would fail again after approval.
+                action.update(status="blocked", allocation_issue=design_issue)
+                workspace.memory.issue(run["campaign_id"], "experiment_design", design_issue, affected=action["id"])
+                store.event(run["campaign_id"], "research.action_rejected", {"record_id": action["id"]})
             else:
-                coordinator._save_decision(run, {"id": "decision_" + action["id"], "title": action["title"],
+                from optimization_framework.campaigns.decision_presentation import action_choices, brief, present_decision
+                decision = {"id": "decision_" + action["id"], "title": action["title"],
                     "rationale": action["rationale"], "action_id": action["id"], "status": "pending",
-                    "options": [{"id": "accept", "label": "Proceed", "description": action.get("expected_information", "")},
-                        {"id": "defer", "label": "Defer", "description": "Keep this direction available without launching it."},
-                        {"id": "reject", "label": "Decline", "description": "Archive this recommendation."}], "recommendation": "accept"})
+                    "options": action_choices(action), "recommendation": "accept", "decision_format": "action",
+                    "recommendation_reason": brief(action["rationale"], 400), "audience": "researcher"}
+                presentation = present_decision(decision, action)
+                decision.update(background=presentation["background"], proposal=presentation["proposal"],
+                    scope_label=presentation["scope_label"])
+                coordinator._save_decision(run, decision)
             store.put("action", action)
         run.update(status="stopped" if stopped else result.get("status", "completed"), result=result,
             usage=result.get("usage", {}), trace=result.get("trace", []), finished_at=now(),

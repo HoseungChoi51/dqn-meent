@@ -9,6 +9,12 @@ from optimization_framework.storage.sqlite import identifier, now
 from optimization_framework.research.providers import api_spend, provider_status
 
 
+# These researcher-interface controls are not scientific action proposals.
+# Explicitly scoped callers can still supply their schemas when needed.
+INTERFACE_COMMANDS = {"campaign.create", "context.import", "context.edit", "models.configure", "issue.resolve",
+    "decision.resolve", "decision.refresh", "research.control", "research.retry", "finalist.set"}
+
+
 class ResearchCancelled(Exception):
     pass
 
@@ -19,10 +25,13 @@ class ResearchCoordinator:
         self.store = workspace.store
         workspace.on_trial_finished = self.reconsider_finished
 
-    def context(self, campaign_id, question="", *, target_id=None, command_operations=None):
+    def context(self, campaign_id, question="", *, target_id=None, command_operations=None, decision_refresh_id=None):
         from optimization_framework.evaluation.registry import problems
         from optimization_framework.optimizers.registry import METHODS
         from optimization_framework.implementations.reuse import assess
+        if decision_refresh_id and command_operations is None:
+            from optimization_framework.campaigns.decisions import refresh_operations
+            command_operations = refresh_operations(self.workspace, decision_refresh_id)
         library = self.workspace.implementations.catalog(refresh=True)
         campaign = self.store.get(campaign_id, "campaign")
         releases = self.store.list("confirmation_release", campaign_id)
@@ -44,10 +53,23 @@ class ResearchCoordinator:
         visible_ids = {item["id"] for _, item in visible_records}
         retrieved = {r["id"] for r in memory["retrieved_records"]}
         if len(trials) > 30:
-            trials = [t for t in trials if t["id"] in retrieved or t in trials[-20:] or t["status"] in {"queued", "running", "paused"}]
+            trials = [t for t in trials if t["id"] in retrieved or t in trials[-20:]
+                or campaign.get("active_study_id") and t.get("study_id") == campaign["active_study_id"]
+                or t["status"] in {"queued", "running", "paused"}]
+        def working_curve(trial_id):
+            # Model prompts already select at most 40 observed points. Project
+            # scalar measurements before compiling the context, so candidate
+            # archives in every journal row cannot consume hundreds of MB.
+            rows = self.workspace.metrics(trial_id, fields=("step", "evaluations", "solver_calls", "elapsed_seconds",
+                "best_objective", "objective", "best_efficiency", "efficiency", "cache_hits", "budget_requests",
+                "unknown_solver_cost", "unknown_worker_cost", "confirmed_observations", "interrupted_requests"))
+            return [rows[round(i * (len(rows) - 1) / 39)] for i in range(40)] if len(rows) > 40 else rows
+
         trials = [{**{key: value for key, value in t.items() if key != "execution_manifest"},
             **({"execution_manifest_digest": content_hash(t["execution_manifest"])} if t.get("execution_manifest") else {}),
-            "curve": self.workspace.metrics(t["id"])} for t in trials]
+            "curve": working_curve(t["id"]),
+            "curve_projection": "At most 40 evenly indexed observed scalar measurements, including endpoints; "
+                "full journal, candidates and diagnostics remain in the saved experiment."} for t in trials]
         context = {"campaign": {**campaign, "charter": campaign}, "tasks": tasks, "trials": trials,
                 "active_study": self.store.get(campaign["active_study_id"], "study") if campaign.get("active_study_id") else None,
                 "problem_definitions": list({(t["problem"]["definition_id"], t["problem"]["evaluator_version"]):
@@ -64,7 +86,8 @@ class ResearchCoordinator:
                     for kind, item in visible_records if kind == "asset"],
                 "application_commands": {key: value for key, value in self.workspace.commands.describe().items()
                     if key in command_operations} if command_operations is not None else {
-                        key: value for key, value in self.workspace.commands.describe().items() if not key.startswith("discovery.")},
+                        key: value for key, value in self.workspace.commands.describe().items()
+                        if not key.startswith("discovery.") and key not in INTERFACE_COMMANDS},
                 "experiment_drafts": [{"draft": item, "readiness": self.workspace.drafts.readiness(item["id"])}
                     for kind, item in visible_records if kind == "experiment_draft"],
                 "historical_reproduction_sources": [{key: item[key] for key in
@@ -79,6 +102,18 @@ class ResearchCoordinator:
                     "candidate_assessments": ({t["id"]: assess(self.workspace.implementations, campaign_id, v, task_id=t["id"]) for t in tasks}
                         if v.get("kind") == "evaluator" else {h["id"]: assess(self.workspace.implementations, campaign_id, v, hypothesis_id=h["id"]) for h in hypotheses})}
                     for v in library["versions"]]}
+        if command_operations is None:
+            context["application_command_scope"] = {"reason": "Scientific action proposal schemas are supplied. "
+                "Campaign creation, model settings, memory editing, inbox decisions and research controls belong to the "
+                "researcher interface; guide the user to those controls instead of inventing omitted payloads.",
+                "omitted_operations": sorted(INTERFACE_COMMANDS)}
+        if decision_refresh_id:
+            from optimization_framework.campaigns.decisions import refresh_context
+            context["decision_refresh"] = refresh_context(self.workspace, decision_refresh_id, campaign_id)
+            context["application_command_scope"] = {
+                "reason": "Reconsideration includes full schemas for selected historical actions and scientific follow-up. "
+                    "Other operations require a separately scoped design turn; do not invent their payloads.",
+                "omitted_operations": sorted(set(self.workspace.commands.describe()) - set(context["application_commands"]))}
         from .context import bounded
         return bounded(context, question=question, target_id=target_id)
 
@@ -110,7 +145,7 @@ class ResearchCoordinator:
             return [dict(note) for note in notes if not request.feedback_review_ids or note["id"] in request.feedback_review_ids]
         return None
 
-    def start(self, request: ResearchInput, automatic=False, command_id=None, feedback_snapshot=None, input_ids=None, dispatch=True):
+    def start(self, request: ResearchInput, automatic=False, command_id=None, feedback_snapshot=None, input_ids=None, dispatch=True, decision_refresh_id=None):
         with self.workspace.lock:
             if command_id:
                 previous = next((r for r in self.store.list("research_run", request.campaign_id) if r.get("manager_command_id") == command_id), None)
@@ -140,7 +175,8 @@ class ResearchCoordinator:
                 raise ValueError("This campaign already has an active research discussion; let it finish or stop it first")
             spent = sum(api_spend(r.get("usage")) for r in runs)
             remaining = max(0, campaign["llm_budget_usd"] - spent - self.workspace.implementations.api_committed(request.campaign_id))
-            context = self.context(request.campaign_id, request.message, target_id=request.hypothesis_id)
+            context = self.context(request.campaign_id, request.message, target_id=request.hypothesis_id,
+                **({"decision_refresh_id": decision_refresh_id} if decision_refresh_id else {}))
             if target is not None and request.mode == "evolve":
                 context["revision_context"] = {"hypothesis_id": target["id"], "reviews": selected_feedback}
             payload = request.model_dump()
@@ -152,6 +188,8 @@ class ResearchCoordinator:
                       "status": "running", "created_at": now(), "trace": [], "usage": {},
                       "checkpoint": None, "automatic": automatic, "control_revision": 0}
             record["manager_command_id"] = command_id
+            if decision_refresh_id:
+                record["decision_refresh_id"] = decision_refresh_id
             record["manager_input_ids"] = input_ids or []
             record["dispatch_phase"] = "queued"
             record["guidance_revision"] = self.workspace.memory.state(request.campaign_id)["guidance_revision"]
@@ -163,6 +201,9 @@ class ResearchCoordinator:
                     "role": "user", "content": request.message, "mode": request.mode, "created_at": now(),
                     "research_run_id": record["id"], "automatic": automatic}, "message.created"))
             self.store.put_many(entries)
+            if decision_refresh_id:
+                from .decision_review import prepare
+                record = prepare(self, record)
             if dispatch:
                 self._thread(record)
             return self.public_run(record)
@@ -178,6 +219,8 @@ class ResearchCoordinator:
             if (campaign["version"] != record["charter_version"] or
                     self.workspace.memory.state(record["campaign_id"])["guidance_revision"] != record.get("guidance_revision", 0)):
                 record.update(status="interrupted", error="Campaign guidance changed before this turn could dispatch; reconsider using current context.")
+                if record.get("decision_review"):
+                    record["decision_review"].update(phase="partial", budget_hold_usd=0.0)
                 self.store.put("research_run", record, "research.stale_result")
                 return
         if not record.get("result_id"):
@@ -238,6 +281,8 @@ class ResearchCoordinator:
             other_cost = sum(api_spend(other.get("usage"))
                 for other in self.store.list("research_run", run["campaign_id"]) if other["id"] != run_id)
             other_cost += self.workspace.implementations.api_committed(run["campaign_id"])
+            other_cost += sum((other.get("decision_review") or {}).get("budget_hold_usd", 0)
+                for other in self.store.list("research_run", run["campaign_id"]) if other["id"] != run_id)
             if event["usage"].get("billing_mode") != "subscription" and other_cost + api_spend(event["usage"]) > campaign["llm_budget_usd"] + 1e-9:
                 run["error"] = "The next call exceeds the current campaign funds after other discussions. No request was sent."
                 self.store.put("research_run", run, "research.budget_blocked")
@@ -261,6 +306,9 @@ class ResearchCoordinator:
         from optimization_framework.research.engine import run_research
         from optimization_framework.research.lifecycle import save_result, finalize, reconciliation
         run = self.store.get(run_id, "research_run")
+        if run.get("decision_review"):
+            from .decision_review import run as run_decision_review
+            return run_decision_review(self, run_id)
         request = dict(run["request"])
         if run.get("checkpoint"):
             request.update(resume_state=run["checkpoint"], resume_fingerprint=run["resume_fingerprint"])
@@ -359,14 +407,21 @@ class ResearchCoordinator:
                     previous.get("title") == decision.get("title") and
                     previous.get("trial_id") == decision.get("trial_id") and
                     not decision.get("action_id")):
+                if decision.get("decision_format") == "structured" and (
+                        previous.get("guidance_revision") != run.get("guidance_revision", 0) or
+                        any(previous.get(key) != decision.get(key) for key in
+                            ("decision_format", "background", "proposal", "options", "recommendation", "recommendation_reason"))):
+                    continue  # A clarified/current question is not the old opaque choice.
                 return  # Keep the researcher's existing answer instead of asking again.
         options = []
         for index, choice in enumerate(decision.get("options", [])):
             options.append(choice if isinstance(choice, dict) else {"id": str(index), "label": choice, "description": ""})
-        decision.update(campaign_id=run["campaign_id"], charter_version=run["charter_version"],
+        decision.update(campaign_id=run["campaign_id"], charter_version=run["charter_version"], guidance_revision=run.get("guidance_revision", 0),
                         research_run_id=run["id"], created_at=now(), options=options,
                         context=decision.get("context", decision.get("rationale", "")),
                         recommendation=decision.get("recommendation", str(decision.get("recommended_option", 0))))
+        if run.get("decision_refresh_id"):
+            decision["decision_refresh_id"] = run["decision_refresh_id"]
         self.store.put("decision", decision, "decision.created")
 
     def control(self, run_id, action):
@@ -414,6 +469,8 @@ class ResearchCoordinator:
             if previous["request"].get("proposal_digest") != proposal_digest or previous["actor"] != actor:
                 raise ValueError("This action identity belongs to another proposal or authority")
             return previous["outcome"]
+        if actor == "manager" and action.get("requires_researcher"):
+            raise ValueError("This action explicitly requires a researcher decision before execution")
         campaign = self.store.get(action["campaign_id"], "campaign")
         if action.get("charter_version", campaign["version"]) != campaign["version"]:
             raise ValueError("This recommendation used an older charter; request a current proposal")
@@ -437,21 +494,30 @@ class ResearchCoordinator:
             return submit(action["command_operation"], action.get("command_payload") or {})
         hypothesis = self.store.get(action["hypothesis_id"], "hypothesis") if action.get("hypothesis_id") else None
         if action["kind"] == "probe":
-            if not action.get("task_id"):
-                raise ValueError("This proposal needs a concrete development task")
+            from optimization_framework.research.action_policy import probe_execution_issue
+            issue = probe_execution_issue(action, autonomous=actor == "manager")
+            if issue:
+                raise ValueError(issue)
             task = self.store.get(action["task_id"], "task")
             if task["split"] == "test":
                 raise ValueError("Exploratory proposals cannot access test tasks")
-            algorithm = action.get("algorithm") or (hypothesis or {}).get("algorithm", "random")
-            config = (hypothesis or {}).get("algorithm_config", {})
-            proposed_steps = action.get("budget_calls") or 64
-            if any(t["task_id"] == task["id"] and t["algorithm"] == algorithm and t["seed"] == 0
+            algorithm = action.get("algorithm") or (hypothesis or {}).get("algorithm")
+            if not algorithm:
+                raise ValueError("The selected hypothesis has no executable algorithm; design or implement it before probing")
+            if hypothesis and action.get("algorithm") and action["algorithm"] != hypothesis.get("algorithm"):
+                raise ValueError("The explicit probe algorithm conflicts with its saved hypothesis")
+            config = action.get("algorithm_config")
+            if config is None:
+                config = (hypothesis or {}).get("algorithm_config", {})
+            proposed_steps = action["budget_calls"]
+            seed = action.get("seed", 0)
+            if any(t["task_id"] == task["id"] and t["algorithm"] == algorithm and t["seed"] == seed
                    and t["max_steps"] == proposed_steps and t["algorithm_config"] == config
                    for t in self.store.list("trial", campaign["id"])):
                 raise ValueError("An identical probe already exists; choose another seed, task, budget, or strategy")
             return submit("trial.create", {"task_id": task["id"], "algorithm": algorithm, "algorithm_config": config,
                 "hypothesis_id": hypothesis["id"] if hypothesis else None, "max_steps": proposed_steps,
-                "wall_seconds": campaign["delegated_trial_seconds"], "question": action["question"]})
+                "seed": seed, "wall_seconds": action.get("wall_seconds") or campaign["delegated_trial_seconds"], "question": action["question"]})
         if action["kind"] == "nominate" and hypothesis:
             return submit("hypothesis.nominate", {"hypothesis_id": hypothesis["id"]})
         if action["kind"] == "search":

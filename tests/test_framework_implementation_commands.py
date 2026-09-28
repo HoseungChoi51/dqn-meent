@@ -158,3 +158,22 @@ def test_accepted_implementation_control_reconciles_before_new_guidance(tmp_path
     restarted.dispatch_outbox()
     assert library.deliveries == [effect_id]
     assert restarted.store.get(old_resume["id"], "outbox")["status"] == "pending"
+
+
+def test_implementation_allocation_preserves_pending_manager_synthesis_funds(tmp_path, monkeypatch):
+    import pytest
+    _, workspace, _, campaign, hypothesis = prepare(tmp_path, monkeypatch)
+    spec = ImplementationSpec(name="Coordinate", mechanism="Bounded coordinate search", problem_id="bounded_continuous",
+        capabilities=["continuous"], acceptance_criteria=["Feasible proposals"])
+    parent = {"id": "reserved_manager", "campaign_id": campaign["id"], "status": "running",
+        "usage": {}, "decision_review": {"budget_hold_usd": campaign["llm_budget_usd"] - 0.1}}
+    workspace.store.put("research_run", parent)
+    with pytest.raises(ValueError, match="remaining API cap"):
+        workspace.implementations.commission(hypothesis["id"], spec, compute_seconds=10,
+            api_budget_usd=0.2, idempotency_key="preserve_manager_funds")
+    assert workspace.store.list("implementation_grant") == []
+    parent["decision_review"]["budget_hold_usd"] = 0
+    workspace.store.put("research_run", parent)
+    grant = workspace.implementations.commission(hypothesis["id"], spec, compute_seconds=10,
+        api_budget_usd=0.2, idempotency_key="preserve_manager_funds")
+    assert grant["request"]["api_budget_usd"] == 0.2

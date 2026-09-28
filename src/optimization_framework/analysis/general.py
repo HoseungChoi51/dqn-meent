@@ -45,9 +45,20 @@ def report(workspace, campaign_id, *, study_id=None, cost_axis=None, cost_view="
     cost_axis = "worker_seconds" if cost_axis == "full_worker_seconds" else cost_axis
     if cost_axis not in AXES:
         raise ValueError("Comparison supports worker_seconds, evaluation_requests, or solver_executions")
+    # Capture output asset references together with their ledger: a trial cannot
+    # advance to an asset newer than this report's cost snapshot. Release the
+    # database before reading metrics or calculating any projection.
+    with workspace.store.connection() as db:
+        if not db.in_transaction:
+            db.execute("BEGIN")
+        trials = workspace.store.list("trial", campaign_id)
+        tasks = {item["id"]: item for item in workspace.store.list("task", campaign_id)}
+        hypotheses = {item["id"]: item for item in workspace.store.list("hypothesis", campaign_id)}
+        amendments = {item["experiment_id"] for item in workspace.store.list("budget_amendment", campaign_id)}
+        costs = workspace.assets.cost_view()
     groups = {}
     excluded = []
-    for trial in workspace.store.list("trial", campaign_id):
+    for trial in trials:
         if study_id and trial.get("study_id") != study_id:
             continue
         if trial.get("recipe") or trial.get("algorithm") == "validate" or trial.get("diagnostic_grant_id"):
@@ -64,12 +75,13 @@ def report(workspace, campaign_id, *, study_id=None, cost_axis=None, cost_view="
         group = groups.setdefault(group_id, {"id": group_id, "condition": condition, "problem": problem.model_dump(mode="json"), "trials": []})
         latest = trial.get("result") or trial.get("progress") or {}
         identity, definition = method_identity(trial)
-        upstream = workspace.assets.attributed_costs(trial.get("initial_assets", []) + trial.get("contribution_asset_ids", trial.get("implementation_cost_asset_ids", [])) + trial.get("operational_cost_asset_ids", []), axes=[cost_axis])
+        upstream = costs.attributed_costs(trial.get("initial_assets", []) + trial.get("contribution_asset_ids", trial.get("implementation_cost_asset_ids", [])) + trial.get("operational_cost_asset_ids", []), axes=[cost_axis])
         if trial["algorithm"] == "package" and not trial.get("implementation_cost_asset_ids"):
             upstream["quantities"][cost_axis].update(total=None, unknown_provenance=1)
             upstream["reason"] = "Implementation development cost has not been declared"
         upstream_cost = upstream["quantities"][cost_axis]["total"]
-        rows = [*workspace.metrics(trial["id"]), latest]
+        rows = [*workspace.metrics(trial["id"], fields=("best_objective", "elapsed_seconds", "evaluations", "solver_calls",
+            "unknown_worker_cost", "unknown_solver_cost")), latest]
         points = {}
         unknown = False
         for row in rows:
@@ -90,7 +102,7 @@ def report(workspace, campaign_id, *, study_id=None, cost_axis=None, cost_view="
                 points[cost] = {"cost": cost, "objective": objective, "direct_cost": direct,
                                 "upstream_cost": upstream_cost if cost_view == "full_attributed_cost" else 0.}
         assets = trial.get("latest_output_asset_ids", [])
-        full = workspace.assets.attributed_costs(assets, axes=[cost_axis]) if assets else None
+        full = costs.attributed_costs(assets, axes=[cost_axis]) if assets else None
         # A measured final asset cost includes final checkpoint/export overhead.
         # No curve extrapolation is made: only its actually observed endpoint is added.
         final_cost = full["quantities"][cost_axis]["total"] if full and cost_view == "full_attributed_cost" else None
@@ -99,11 +111,14 @@ def report(workspace, campaign_id, *, study_id=None, cost_axis=None, cost_view="
             points[final_cost] = {"cost": final_cost, "objective": best, "upstream_cost": upstream_cost,
                                   "direct_cost": None if upstream_cost is None else max(0., final_cost - upstream_cost)}
         scientific_complete = bool(latest.get("scientific_complete"))
+        from .finalists import prototype_details
+        details = prototype_details(trial, study, tasks.get(trial.get("task_id")), hypotheses.get(trial.get("hypothesis_id")))
         group["trials"].append({"id": trial["id"], "seed": trial["seed"], "method_id": identity, "method": definition,
+            **details,
             "algorithm": trial["algorithm"], "status": trial["status"], "best_objective": best,
             "scientific_complete": scientific_complete, "process_exit": latest.get("process_exit"),
             "allocation_stop": latest.get("allocation_stop"), "censored": not scientific_complete,
-            "adaptive_extension": any(item["experiment_id"] == trial["id"] for item in workspace.store.list("budget_amendment", campaign_id)),
+            "adaptive_extension": trial["id"] in amendments,
             "unknown_cost": unknown or upstream_cost is None, "upstream": upstream, "full_cost": full,
             "curve": [points[key] for key in sorted(points)]})
     for group in groups.values():
@@ -128,7 +143,7 @@ def report(workspace, campaign_id, *, study_id=None, cost_axis=None, cost_view="
         group["common_observed_cost"] = horizon
     return {"schema_version": 1, "campaign_id": campaign_id, "study_id": study_id, "cost_view": cost_view,
             "cost_axis": cost_axis, "groups": list(groups.values()), "excluded": excluded,
-            "actual_campaign_costs": workspace.assets.actual_costs(campaign_id,
+            "actual_campaign_costs": costs.actual_costs(campaign_id,
                 axes=("worker_seconds", "evaluation_requests", "solver_executions", "implementation_seconds", "model_seconds", "model_calls", "model_input_tokens", "model_output_tokens", "api_usd")),
             "interpretation": "Raw objectives on compatible instances and fidelities at observed costs; no extrapolation or cross-problem ranking.",
             "claim_level": "descriptive", "confirmation_protocol": (study or {}).get("confirmation") or None}

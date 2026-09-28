@@ -10,6 +10,7 @@ import { RevalidationForm } from './implementations';
 import { BundleTransfers } from './bundles';
 import { CostReceipts } from './costReceipts';
 import { ReproductionPanel } from './reproduction';
+import { PrototypePicker } from './prototypePicker';
 
 type Props = { state: State; actions: WorkspaceActions };
 function Panel({ children, ...props }: ComponentProps<typeof BasePanel>) {
@@ -17,11 +18,13 @@ function Panel({ children, ...props }: ComponentProps<typeof BasePanel>) {
 }
 function useRead<T>(path: string | null, revision: unknown) {
   const [data, setData] = useState<T | null>(null), [error, setError] = useState('');
+  const [loading, setLoading] = useState(Boolean(path));
   const mounted = useRef(true), fetching = useRef(false), current = useRef<string | null>(null), pending = useRef<string | null>(null);
   useEffect(() => { mounted.current = true; return () => { mounted.current = false; pending.current = null; }; }, []);
   useEffect(() => {
     if (current.current !== path) { current.current = path; setData(null); setError(''); }
     pending.current = path;
+    setLoading(Boolean(path));
     async function refresh() {
       if (fetching.current) return;
       fetching.current = true;
@@ -36,11 +39,11 @@ function useRead<T>(path: string | null, revision: unknown) {
             if (mounted.current && current.current === requested) { setData(value); setError(''); }
           } catch (e) { if (mounted.current && current.current === requested) setError(errorText(e)); }
         }
-      } finally { fetching.current = false; }
+      } finally { fetching.current = false; if (mounted.current) setLoading(false); }
     }
     void refresh();
   }, [path, revision]);
-  return { data, error };
+  return { data, error, loading };
 }
 function eventRevision(state: State) { return state.event_cursor ?? Math.max(0, ...state.events.map(e => Number(e.id) || 0)); }
 function cost(value: Json | undefined, axis: string) {
@@ -48,52 +51,7 @@ function cost(value: Json | undefined, axis: string) {
   return axis === 'worker_seconds' ? seconds(value.total) : value.total.toLocaleString();
 }
 
-function ObjectivePlot({ group, axis }: { group: Json; axis: string }) {
-  let xmin = Infinity, xmax = -Infinity, ymin = Infinity, ymax = -Infinity;
-  for (const trial of group.trials) for (const point of trial.curve) {
-    xmin = Math.min(xmin, point.cost); xmax = Math.max(xmax, point.cost);
-    ymin = Math.min(ymin, point.objective); ymax = Math.max(ymax, point.objective);
-  }
-  if (!Number.isFinite(xmin)) return <p className="help-text">No complete cost observations are available for a curve yet.</p>;
-  const x = (value: number) => 65 + (value - xmin) / (xmax - xmin || 1) * 650;
-  const y = (value: number) => 230 - (value - ymin) / (ymax - ymin || 1) * 195;
-  const colors = ['#215e72', '#bb7126', '#7454a1', '#1e8063', '#c05258'];
-  return <svg viewBox="0 0 760 285" role="img" aria-label={`${group.problem.primary_objective.name} by ${axis}`} className="evidence-plot">
-    <path d="M65 25V230H720" fill="none" stroke="#bac6cb" />
-    <text x="60" y="245" textAnchor="middle">{xmin.toPrecision(3)}</text><text x="715" y="245" textAnchor="middle">{xmax.toPrecision(3)}</text>
-    <text x="57" y="234" textAnchor="end">{ymin.toPrecision(3)}</text><text x="57" y="39" textAnchor="end">{ymax.toPrecision(3)}</text>
-    <text x="390" y="274" textAnchor="middle">{axis.replaceAll('_', ' ')}</text>
-    {group.trials.map((trial: Json, i: number) => <g key={trial.id}><polyline fill="none" stroke={colors[i % colors.length]} strokeWidth="2"
-      points={trial.curve.map((point: Json) => `${x(point.cost)},${y(point.objective)}`).join(' ')}><title>{trial.algorithm} · seed {trial.seed}</title></polyline>
-      {trial.curve.slice(-1).map((point: Json) => <circle key={point.cost} cx={x(point.cost)} cy={y(point.objective)} r="4" fill={colors[i % colors.length]}>
-        <title>{trial.algorithm}, seed {trial.seed}: {point.objective} at {point.cost}</title></circle>)}</g>)}
-  </svg>;
-}
-
-export function GeneralComparison({ state }: Props) {
-  const [axis, setAxis] = useState('worker_seconds'), [study, setStudy] = useState('');
-  const studyId = study || state.campaign?.active_study_id;
-  const path = state.campaign ? `/api/v1/campaigns/${state.campaign.id}/comparison?cost_axis=${axis}${studyId ? `&study_id=${studyId}` : ''}` : null;
-  const { data: report, error } = useRead<Json>(path, eventRevision(state));
-  return <><div className="page-heading"><div><span className="eyebrow">Evidence comparison</span><h1>Compare at full upstream cost.</h1>
-    <p>Each problem instance and fidelity has its own comparison. Incomplete work and unknown costs stay visible.</p></div></div>
-    <div className="form-grid"><Field label="Study"><select value={studyId || ''} onChange={e => setStudy(e.target.value)}>{(state.studies || []).map((s: Json) => <option key={s.id} value={s.id}>{s.goal}</option>)}</select></Field>
-      <Field label="Comparison cost"><select value={axis} onChange={e => setAxis(e.target.value)}><option value="worker_seconds">Full upstream worker time</option><option value="evaluation_requests">Full upstream evaluation requests</option><option value="solver_executions">Full upstream solver executions</option></select></Field></div>
-    <ErrorNotice text={error} />
-    {report && !report.groups.length && <Empty title="No comparable experiments yet">Create experiments in this study to compare their observed objectives.</Empty>}
-    {report?.groups.map((group: Json) => <Panel key={group.id} title={`${group.problem.definition_id} · ${group.problem.primary_objective.direction} ${group.problem.primary_objective.name}`}>
-      <p className="help-text">Objective units: {group.problem.primary_objective.units} · matched cost: {group.common_observed_cost == null ? 'No shared observed range' : axis === 'worker_seconds' ? seconds(group.common_observed_cost) : group.common_observed_cost}</p>
-      <ObjectivePlot group={group} axis={axis} />
-      <div className="table-scroll"><table className="data-table"><thead><tr><th>Method / seed</th><th>Best observed</th><th>Full cost</th><th>Procedure</th></tr></thead><tbody>{group.trials.map((trial: Json) => <tr key={trial.id}>
-        <td>{trial.algorithm} · {trial.seed}<small>{trial.method_id.slice(0, 10)}</small></td><td>{objectiveValue(trial.best_objective, group.problem.primary_objective)}</td>
-        <td>{cost(trial.full_cost?.quantities?.[axis], axis)}{trial.unknown_cost && <small>Incomplete cost provenance</small>}</td>
-        <td>{trial.scientific_complete ? 'Complete' : 'Incomplete / censored'}{trial.adaptive_extension && <small>Allocation extended</small>}</td></tr>)}</tbody></table></div>
-      <p className="help-text">Descriptive observations; this view does not establish superiority or estimate uncertainty.</p></Panel>)}
-    {report && <Panel title="Actual campaign expenditure"><p>{cost(report.actual_campaign_costs.quantities.worker_seconds, 'worker_seconds')} worker time · {cost(report.actual_campaign_costs.quantities.evaluation_requests, 'evaluation_requests')} requests.</p>
-      <p>{cost(report.actual_campaign_costs.quantities.model_calls, 'model_calls')} model calls · implementation service elapsed time: {cost(report.actual_campaign_costs.quantities.implementation_seconds, 'worker_seconds')}.</p>
-      <p className="help-text">Shared computations are counted once here. Each dependent method receives its full upstream contribution in the comparison.</p></Panel>}
-  </>;
-}
+export { GeneralComparison } from './comparison';
 
 export function AssetLibrary({ state, actions }: Props) {
   const { data: assets, error } = useRead<Json[]>('/api/v1/assets', eventRevision(state));
@@ -393,13 +351,17 @@ export function StudyView({ state, actions }: Props) {
   const [taskIds, setTaskIds] = useState<string[]>([]), [requiredChecks, setRequiredChecks] = useState<string[]>([]), [checkParameters, setCheckParameters] = useState<Json>({}), [checkWall, setCheckWall] = useState(120);
   const [selectionRule, setSelectionRule] = useState<Json | null>(null), [analysisRule, setAnalysisRule] = useState<Json | null>(null);
   const [nominationId, setNominationId] = useState(''), [references, setReferences] = useState<string[]>([]);
+  const [finalistSource, setFinalistSource] = useState<Json | null>(null);
+  useEffect(() => { setOpen(false); setMethods([]); setFinalistSource(null); setNominationId(''); setReferences([]); }, [state.campaign?.id]);
   const { data: assets } = useRead<Json[]>('/api/v1/assets', eventRevision(state));
   const { data: catalog } = useRead<Json>(problemCatalogPath(state.campaign?.id), eventRevision(state));
   const definitions = state.tasks.filter(task => taskIds.includes(task.id)).map(task => problemDefinition(catalog?.problems, task.problem));
   const assertionSchemas: Json = definitions[0]?.recipe_schemas || {};
   const checks = Object.keys(assertionSchemas).filter(id => definitions.length && definitions.every(definition => definition?.recipe_schemas?.[id]?.assertion_kind && definition.recipe_schemas[id].available !== false));
   async function submit(event: React.FormEvent) {
-    event.preventDefault(); setBusy(true); setFailure('');
+    event.preventDefault(); setFailure('');
+    if (scope === 'confirmation' && !methods.length && !nominationId) { setFailure('Choose at least one prototype experiment or a frozen development nomination.'); return; }
+    setBusy(true);
     try { await command('study.create', { goal, scope, task_ids: taskIds,
       validation_policy: { manager_may_waive: waivers, required_recipes: requiredChecks,
         waivable_kinds: ['solution_fidelity', 'learner_diagnostics', ...(scope === 'exploratory' && evaluatorWaivers ? ['evaluator_correctness'] : [])],
@@ -407,6 +369,8 @@ export function StudyView({ state, actions }: Props) {
       comparison: { cost_axis: axis, cost_view: 'full_attributed_cost' },
       ...(scope === 'exploratory' && selectionRule ? { selection: selectionRule } : {}),
       ...(scope === 'confirmation' ? { confirmation_kind: kind, prototype_trial_ids: methods, seeds: seeds.split(',').map(Number), selection_rule: selection,
+        ...(finalistSource && methods.some(id => finalistSource.trial_ids.includes(id))
+          ? { finalist_selection_id: finalistSource.id, finalist_selection_revision: finalistSource.revision } : {}),
         ...(analysisRule ? { analysis: analysisRule } : {}), ...(nominationId ? { nomination_id: nominationId } : {}), reference_trial_ids: references,
         ...(kind === 'policy_transfer' ? { policy_asset_id: policy, adaptation: 'forbidden' } : {}) } : {}) });
       await actions.refresh(); setOpen(false); actions.notify('A linked study with a frozen scientific scope is now active.');
@@ -435,7 +399,8 @@ export function StudyView({ state, actions }: Props) {
       {scope === 'confirmation' && <><Field label="Confirmation protocol"><select value={kind} onChange={e => setKind(e.target.value)}><option value="seed_replication">Fresh seeds on a known instance</option><option value="unseen_instance">Unseen problem instances</option><option value="policy_transfer">Frozen policy transfer</option></select></Field>
         <Field label="Fresh seeds"><input required value={seeds} onChange={e => setSeeds(e.target.value)} /></Field>
         <Field wide label="Frozen development nomination" hint="A nomination includes its selected method automatically; choose any additional controls below."><select value={nominationId} onChange={e => setNominationId(e.target.value)}><option value="">Choose procedures directly</option>{(state.nominations || []).map((item: Json) => <option key={item.id} value={item.id}>{state.studies.find((study: Json) => study.id === item.study_id)?.goal || item.study_id} · {item.rule.rule_id}</option>)}</select></Field>
-        <Field wide label="Prototype experiments" hint="Select procedures and budgets for confirmation, including controls for the nominated method."><select multiple required={!nominationId} value={methods} onChange={e => setMethods(Array.from(e.target.selectedOptions, item => item.value))}>{state.trials.filter(trial => !['recipe', 'validate'].includes(trial.algorithm) && !trial.diagnostic_grant_id).map(trial => <option key={trial.id} value={trial.id}>{trial.algorithm} · seed {trial.seed} · {trial.id.slice(-8)}</option>)}</select></Field>
+        <PrototypePicker key={state.campaign?.id} state={state} value={methods} onChange={setMethods} disabled={busy}
+          onUseSaved={saved => { setMethods(saved.prototype_trial_ids); setFinalistSource(saved); }} />
         {analysisRule && <Field wide label="Frozen comparison references" hint="Optional prior completed experiments; the selected analysis rule determines whether references are required."><select multiple value={references} onChange={e => setReferences(Array.from(e.target.selectedOptions, item => item.value))}>{state.trials.filter(trial => trial.status === 'completed' && !trial.recipe && !trial.diagnostic_grant_id).map(trial => <option key={trial.id} value={trial.id}>{trial.algorithm} · seed {trial.seed} · {trial.id.slice(-8)}</option>)}</select></Field>}
         <Field wide label="Selection and comparison rule"><textarea required value={selection} onChange={e => setSelection(e.target.value)} /></Field>
         {kind === 'policy_transfer' && <Field label="Frozen policy asset"><select required value={policy} onChange={e => setPolicy(e.target.value)}><option value="">Select a declared policy</option>{assets?.filter(asset => asset.kind === 'policy').map(asset => <option key={asset.id} value={asset.id}>{asset.title}</option>)}</select></Field>}</>}

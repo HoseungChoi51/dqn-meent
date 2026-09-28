@@ -667,7 +667,7 @@ class DiscoveryController:
 
     def _step_context(self, task, run):
         """Resume from actual task work; the starting scientific snapshot is fixed."""
-        from optimization_framework.research.context import LIMIT, size
+        from optimization_framework.research.context import DISCOVERY_LIMIT as LIMIT, size
         context = deepcopy(run["context_snapshot"])
         # Assigned records below carry complete proposal/measurement evidence.
         # Remove redundant overview copies BEFORE deduplication, so no surviving
@@ -1088,6 +1088,17 @@ class DiscoveryController:
         session = self.active(campaign_id)
         if not session or self.workspace.shutdown_event.is_set():
             return
+        # A decision reassessment owns a bounded parallel-review protocol and
+        # one publishing manager. Let already sent discovery calls settle, but
+        # never turn its queued command into an autonomous discovery task.
+        with self.workspace.lock:
+            review_pending = any(row.get("decision_refresh_id") and row["status"] in {"queued", "waiting_provider"}
+                for row in self.store.list("manager_command", campaign_id))
+            review_active = any((row.get("decision_review") or row.get("parent_review_run_id"))
+                and row["status"] in {"running", "stopping", "needs_reconciliation"}
+                for row in self.store.list("research_run", campaign_id))
+            if review_pending or review_active:
+                return
         with self.workspace.lock, self.store.transaction():
             self._reconcile_task_issues(session)
             self._admit_guidance(session)
