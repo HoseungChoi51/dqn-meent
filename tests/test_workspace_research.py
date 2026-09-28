@@ -248,8 +248,9 @@ def test_independent_generators_dynamic_roles_and_hidden_test_filter(monkeypatch
     emitted = []
     result = research.run_research({"mode": "generate", "max_calls": 7, "llm_budget_usd": 1}, ctx, emitted.append)
     assert len(calls) == 6
-    assert "initialize(n_cells, seed, config)" in calls[0]["messages"][0]["content"]
-    assert "Only the Python standard" in calls[1]["messages"][0]["content"]
+    assert "declared problem descriptor" in calls[0]["messages"][0]["content"]
+    assert "initialize(n_cells, seed, config)" not in calls[0]["messages"][0]["content"]
+    assert "implementation service" in calls[1]["messages"][0]["content"]
     assert seen[0]["previous_role_results"] == [] and seen[1]["previous_role_results"] == []
     assert seen[1]["new_hypotheses"] == []
     assert "SECRET_TEST" not in json.dumps(calls) and "SECRET_RESULT" not in json.dumps(calls)

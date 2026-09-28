@@ -249,7 +249,9 @@ def test_restart_reconciliation_is_idempotent_after_partial_database_write(works
     with pytest.raises(OSError, match="Simulated process failure"):
         original.start()
     original.close()
-    assert len(original.store.list("decision", charter["id"])) == 1
+    # The decision and uncertain run now share one transaction; a failure
+    # between the writes leaves neither projection partially committed.
+    assert len(original.store.list("decision", charter["id"])) == 0
     restarted = workspaces(original.directory)
     restarted.start()
     decisions = [item for item in restarted.store.list("decision", charter["id"])

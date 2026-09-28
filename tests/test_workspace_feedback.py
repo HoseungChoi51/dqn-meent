@@ -2,6 +2,7 @@
 
 import copy
 import json
+from types import SimpleNamespace
 
 import httpx
 from fastapi.testclient import TestClient
@@ -65,7 +66,10 @@ def test_two_feedback_revision_rounds_and_visible_critique(tmp_path, monkeypatch
             "choices": [{"message": {"content": json.dumps(result)}}],
         })
 
-    app = create_app(tmp_path / "workspace", start_workers=False)
+    # This test isolates model feedback; catalog refresh must not reuse the
+    # provider transport double or contact a separately running library.
+    app = create_app(tmp_path / "workspace", start_workers=False,
+        implementation_client=SimpleNamespace(versions=lambda: []))
     with TestClient(app) as client:
         real_client = httpx.Client
         monkeypatch.setattr(research.httpx, "Client", lambda **kw: real_client(transport=httpx.MockTransport(respond), **kw))

@@ -1,0 +1,11 @@
+{
+  "directory": "runs/discovery/grating-luna-20260928",
+  "frontend_directory": "runs/discovery/grating-luna-20260928/frontend-dist",
+  "workspace_port": 8791,
+  "implementation_port": 8790,
+  "tailnet_port": 8449,
+  "workers": 2,
+  "provider": "codex",
+  "model": "gpt-6-luna",
+  "llm_enabled": true
+}

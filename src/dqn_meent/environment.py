@@ -1,4 +1,4 @@
-"""Gymnasium binary-cell inverse design environment with an observed clock."""
+"""Binary-cell inverse design with finite or continuing-task collection semantics."""
 from copy import deepcopy
 
 import gymnasium as gym
@@ -11,10 +11,10 @@ from .physics import ForwardResult, ForwardSolver, validate_design
 class MetagratingEnv(gym.Env):
     """Flip one air/silicon cell per action and evaluate its +1 TM efficiency.
 
-    Observation: n_cells entries in {-1,+1}, followed by remaining-horizon
-    fraction. The clock makes the finite-horizon problem Markov. Its last action
-    terminates the MDP (terminated=True, truncated=False), so the DQN target must
-    not bootstrap beyond this horizon.
+    The default finite mode observes n_cells entries in {-1,+1} and a remaining
+    horizon fraction, then terminates without bootstrap. Continuing mode observes
+    only the structure and truncates collection at the same horizon; its actual
+    final next structure remains a nonterminal bootstrap target.
 
     `paper` reward is eta_next**3. `difference` is eta_next-eta_current; its
     undiscounted return telescopes to eta_final-eta_initial. These are distinct
@@ -23,21 +23,27 @@ class MetagratingEnv(gym.Env):
 
     metadata = {"render_modes": []}
 
-    def __init__(self, physics_config: PhysicsConfig, horizon=128, reward_mode="paper"):
+    def __init__(self, physics_config: PhysicsConfig, horizon=128, reward_mode="paper",
+                 episode_mode="finite"):
         super().__init__()
         if not isinstance(horizon, int) or isinstance(horizon, bool) or horizon < 1:
             raise ValueError("horizon must be a positive integer")
         if reward_mode not in {"paper", "difference"}:
             raise ValueError("reward_mode must be paper or difference")
+        if episode_mode not in {"finite", "continuing"}:
+            raise ValueError("episode_mode must be finite or continuing")
         self.physics_config = physics_config
         self.n_cells = physics_config.n_cells
         self.horizon = horizon
         self.reward_mode = reward_mode
+        self.episode_mode = episode_mode
         self.solver = ForwardSolver(physics_config)
         self.action_space = gym.spaces.Discrete(self.n_cells)
+        time_aware = episode_mode == "finite"
+        low = np.r_[np.full(self.n_cells, -1.0), 0.0] if time_aware else np.full(self.n_cells, -1.0)
         self.observation_space = gym.spaces.Box(
-            low=np.r_[np.full(self.n_cells, -1.0), 0.0].astype(np.float32),
-            high=np.ones(self.n_cells + 1, dtype=np.float32),
+            low=low.astype(np.float32),
+            high=np.ones(self.n_cells + int(time_aware), dtype=np.float32),
             dtype=np.float32,
         )
         self._design = None
@@ -61,6 +67,7 @@ class MetagratingEnv(gym.Env):
         return {
             "horizon": self.horizon,
             "reward_mode": self.reward_mode,
+            "episode_mode": self.episode_mode,
             "design": self.design,
             "best_design": self.best_design,
             "best_efficiency": self.best_efficiency,
@@ -76,6 +83,8 @@ class MetagratingEnv(gym.Env):
     def load_state_dict(self, state):
         if state["horizon"] != self.horizon or state["reward_mode"] != self.reward_mode:
             raise ValueError("Cannot restore environment with different horizon/reward")
+        if state.get("episode_mode", "finite") != self.episode_mode:
+            raise ValueError("Cannot restore environment with different episode_mode")
         self.solver.load_state_dict(state["solver"])
         self._design = (None if state["design"] is None else
                         validate_design(state["design"], self.n_cells))
@@ -91,6 +100,8 @@ class MetagratingEnv(gym.Env):
         self.action_space.np_random.bit_generator.state = deepcopy(state["action_random"])
 
     def _observation(self):
+        if self.episode_mode == "continuing":
+            return self._design.astype(np.float32) * 2 - 1
         observation = np.empty(self.n_cells + 1, dtype=np.float32)
         observation[:-1] = self._design.astype(np.float32) * 2 - 1
         observation[-1] = (self.horizon - self.step_count) / self.horizon
@@ -148,4 +159,6 @@ class MetagratingEnv(gym.Env):
         reward = (self.efficiency**3 if self.reward_mode == "paper" else
                   self.efficiency - previous_efficiency)
         self._terminated = self.step_count >= self.horizon
-        return self._observation(), float(reward), self._terminated, False, self._info()
+        terminated = self._terminated and self.episode_mode == "finite"
+        truncated = self._terminated and self.episode_mode == "continuing"
+        return self._observation(), float(reward), terminated, truncated, self._info()

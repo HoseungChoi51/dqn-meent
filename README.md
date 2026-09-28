@@ -1,6 +1,10 @@
-# Grating Lab: researcher-guided inverse design
+# Optimization Lab — experimental optimizer research framework
 
-A local research workspace for comparing, designing, and improving optimization strategies for binary 1D optical gratings. The React dashboard combines concurrent experiments, strategy dossiers, researcher decisions, adaptive LLM discussions, source retrieval, and cost-aware comparisons. Numerical experiments use **real MEENT RCWA evaluations**.
+A general research harness for users and LLM agents to develop an effective optimizer for the problem at hand. The framework is reusable; finding a universal optimizer is not its goal. It combines durable campaigns, problem/evaluator plugins, literature evidence, independent strategy proposals, numerical experiments, and a separate implementation/validation service.
+
+**This is a partial, experimental implementation.** The current branch contains real GPT-6 Luna discovery runs and real numerical experiments, but the complete autonomous analysis → literature → proposal → experiment → critique → revision cycle is not yet qualified. See the [publication checkpoint](docs/publication-checkpoint.md) for working features, test results and known failures.
+
+The React dashboard exposes scientific work products and ordinary agent dialogue, tool receipts and append-only logs. The reference scientific application is binary **1D grating inverse design using real MEENT RCWA evaluations**. A bounded continuous benchmark exercises the general problem interface.
 
 The original reconstruction of the DQN optimization loop in Seo et al., *Structural Optimization of a One-Dimensional Freeform Metagrating Deflector via Deep Reinforcement Learning*, ACS Photonics 9, 452–458 (2022), remains available alongside random search, restart hill climbing, annealing, block tabu, population, and surrogate search. The workspace supports reviewed custom optimizer source. Implementation and smoke tests do not establish a state-of-the-art result.
 
@@ -9,27 +13,27 @@ The original reconstruction of the DQN optimization loop in Seo et al., *Structu
 Use Linux, Python 3.12 or 3.13, [uv](https://docs.astral.sh/uv/), and a supported Node.js installation. From this directory:
 
 ```bash
-uv sync --frozen --extra dev
+uv sync --frozen --all-extras
 cd frontend
 npm ci
 npm run build
 cd ..
-uv run grating-lab --directory runs/workspace --workers 2 --port 8765
+uv run --no-sync optimization-lab --directory runs/workspace --workers 2 --port 8765
 ```
 
 Open **http://127.0.0.1:8765**. Create a campaign, define development configurations and budgets, then launch a small experiment or discuss a hypothesis with the research partner. Data remain in the workspace directory after closing the browser.
 
-**Codex with `gpt-6-sol` is the default for every research role, with model execution disabled until you configure it.** The dashboard and numerical experiments work immediately; research requests use explicitly labeled curated guidance while configuration is deferred. Codex uses your subscription allowance, tracked separately from paid API spending. Existing `.key` credentials are ignored unless you explicitly enable an API provider, and there is no automatic paid fallback. See the [workspace guide](docs/workspace.md) when you are ready to configure Codex, and for workflows, custom algorithms, and recovery.
+**Codex with `gpt-6-sol` is the default for every research role, with model execution disabled until you configure it.** The dashboard and numerical experiments work immediately; research requests remain in the campaign's durable inbox while configuration is deferred. Codex uses your subscription allowance, tracked separately from paid API spending. Existing `.key` credentials are ignored unless you explicitly enable an API provider, and there is no automatic paid fallback. See the [workspace guide](docs/workspace.md) when you are ready to configure Codex, and for workflows, custom algorithms, and recovery.
 
 The [implementation evidence map](docs/implementation-status.md) connects the [research-system plan](docs/agentic-algorithm-discovery-plan.md) to code, tests, and unverified research outcomes.
 
 For the original single-run numerical interface:
 
 ```bash
-uv run dqn-meent train --config configs/smoke.json --output runs/smoke
-uv run dqn-meent evaluate --run runs/smoke --orders 5 15 25 40
-uv run dqn-meent design --run runs/smoke --output runs/smoke/design.png
-uv run pytest -q
+uv run --no-sync dqn-meent train --config configs/smoke.json --output runs/smoke
+uv run --no-sync dqn-meent evaluate --run runs/smoke --orders 5 15 25 40
+uv run --no-sync dqn-meent design --run runs/smoke --output runs/smoke/design.png
+uv run --no-sync pytest -q
 ```
 
 The lock file pins the environment. PyTorch's default Linux distribution can download several GB of CUDA dependencies even when using CPU. A GPU is **not required**. This setup uses NumPy/complex128 for MEENT and CPU PyTorch by default; `training.device="cuda"` moves only the Q-network, not the optical solver. Small Q-networks and 1D RCWA are often suitable for CPU. The CLI limits BLAS to one thread; training likewise defaults to one PyTorch thread.
@@ -85,13 +89,13 @@ The observed clock and terminal treatment intentionally differ from the original
 ## Run an experiment and compare searches
 
 ```bash
-uv run dqn-meent train --config configs/starter.json --output runs/dqn-s0 --seed 0
-uv run dqn-meent baseline --config configs/starter.json --output runs/random-s0 --method random --budget 10000 --seed 0
-uv run dqn-meent baseline --config configs/starter.json --output runs/hillclimb-s0 --method hillclimb --budget 10000 --seed 0
-uv run dqn-meent evaluate --run runs/dqn-s0 --orders 15 25 40 60
-uv run dqn-meent evaluate --run runs/random-s0 --orders 15 25 40 60
-uv run dqn-meent evaluate --run runs/hillclimb-s0 --orders 15 25 40 60
-uv run dqn-meent plot --runs runs/dqn-s0 runs/random-s0 runs/hillclimb-s0 --output runs/comparison.png
+uv run --no-sync dqn-meent train --config configs/starter.json --output runs/dqn-s0 --seed 0
+uv run --no-sync dqn-meent baseline --config configs/starter.json --output runs/random-s0 --method random --budget 10000 --seed 0
+uv run --no-sync dqn-meent baseline --config configs/starter.json --output runs/hillclimb-s0 --method hillclimb --budget 10000 --seed 0
+uv run --no-sync dqn-meent evaluate --run runs/dqn-s0 --orders 15 25 40 60
+uv run --no-sync dqn-meent evaluate --run runs/random-s0 --orders 15 25 40 60
+uv run --no-sync dqn-meent evaluate --run runs/hillclimb-s0 --orders 15 25 40 60
+uv run --no-sync dqn-meent plot --runs runs/dqn-s0 runs/random-s0 runs/hillclimb-s0 --output runs/comparison.png
 ```
 
 Random search generates independent uniform binary designs after the initial all-Si design. Hill climbing proposes a random single-cell change and restarts after `2*N` rejected moves; it is not the article's exhaustive depth-1/depth-2 greedy baseline. Use several seeds for each algorithm before making comparative claims. Train a separate model for each wavelength/angle; this initial framework does not claim cross-condition generalization.
@@ -114,7 +118,7 @@ A training run produces:
 To resume an **interrupted run with the same configuration and original total-step schedule**:
 
 ```bash
-uv run dqn-meent train --config configs/starter.json --output runs/dqn-s0 --seed 0 --resume runs/dqn-s0/checkpoint.pt
+uv run --no-sync dqn-meent train --config configs/starter.json --output runs/dqn-s0 --seed 0 --resume runs/dqn-s0/checkpoint.pt
 ```
 
 Do not modify the step count to extend a completed checkpoint: that changes the exploration schedule. Start a new run for a new experimental budget. Checkpoints contain Python/PyTorch objects; load only checkpoints you trust. New runs reject nonempty output directories to protect existing results.

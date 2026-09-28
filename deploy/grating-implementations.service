@@ -1,0 +1,22 @@
+[Unit]
+Description=Grating Lab implementation and validation library
+After=network-online.target
+
+[Service]
+Type=simple
+WorkingDirectory=@REPOSITORY@
+Environment=GRATING_LLM_PROVIDER=codex
+Environment=GRATING_LLM_MODEL=gpt-6-sol
+Environment=GRATING_LLM_ENABLED=true
+Environment=GRATING_LLM_DISABLED=false
+Environment=GRATING_CODEX_BINARY=%h/.local/bin/codex
+Environment=GRATING_LLM_REASONING_EFFORT=low
+Environment=OPENBLAS_NUM_THREADS=1
+Environment=OMP_NUM_THREADS=1
+Environment=MKL_NUM_THREADS=1
+ExecStart=@REPOSITORY@/.venv/bin/python -m dqn_meent.implementations.api --port 8766
+Restart=on-failure
+RestartSec=3
+
+[Install]
+WantedBy=default.target

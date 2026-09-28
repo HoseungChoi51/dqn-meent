@@ -16,53 +16,11 @@ def write_json(path, data):
 
 
 def baseline(config, output_dir, method="random", budget=1000, seed=0):
-    """Budget is forward-evaluation requests, including the initial all-Si design.
-
-    Cache misses (actual RCWA solves) are reported separately. Hill climbing
-    proposes one random bit flip, accepts non-worsening moves, and restarts
-    after 2*N rejected proposals. This is not the paper's exhaustive greedy.
-    """
-    if budget < 1 or method not in {"random", "hillclimb"}:
-        raise ValueError("Require positive budget and random/hillclimb method")
-    out = Path(output_dir)
-    if out.exists() and any(out.iterdir()):
-        raise ValueError(f"Output directory is not empty: {out}")
-    out.mkdir(parents=True, exist_ok=True)
-    write_json(out / "config.json", config.to_dict())
-    rng = np.random.default_rng(seed)
-    solver = ForwardSolver(config.physics)
-    current = np.ones(config.physics.n_cells, dtype=np.uint8)
-    current_eta, best_eta, best, rejects = -1., -1., current.copy(), 0
-    start = time.perf_counter()
-    with (out / "metrics.csv").open("w", newline="") as f:
-        writer = csv.DictWriter(f, fieldnames=["step", "efficiency", "best_efficiency", "solver_calls", "cache_hits", "elapsed_seconds"])
-        writer.writeheader()
-        for step in range(budget):
-            if step == 0:
-                candidate = current.copy()
-            elif method == "random" or rejects >= 2 * config.physics.n_cells:
-                candidate = rng.integers(0, 2, config.physics.n_cells, dtype=np.uint8)
-                if method == "hillclimb":
-                    current_eta, rejects = -1., 0
-            else:
-                candidate = current.copy()
-                candidate[rng.integers(config.physics.n_cells)] ^= 1
-            result = solver.evaluate(candidate)
-            if result.efficiency >= current_eta:
-                current, current_eta, rejects = candidate.copy(), result.efficiency, 0
-            else:
-                rejects += 1
-            if result.efficiency > best_eta:
-                best, best_eta = candidate.copy(), result.efficiency
-            writer.writerow(dict(step=step + 1, efficiency=result.efficiency, best_efficiency=best_eta,
-                                 solver_calls=solver.solver_calls, cache_hits=solver.cache_hits,
-                                 elapsed_seconds=time.perf_counter() - start))
-    np.save(out / "best_design.npy", best)
-    summary = dict(method=method, seed=seed, evaluation_requests=budget,
-                   solver_calls=solver.solver_calls, cache_hits=solver.cache_hits,
-                   best_efficiency=best_eta, elapsed_seconds=time.perf_counter() - start)
-    write_json(out / "summary.json", summary)
-    return summary
+    """Run the preserved baseline profile through the framework lifecycle."""
+    if method not in {"random", "hillclimb"}:
+        raise ValueError("Require random/hillclimb method")
+    from .lifecycle import execute
+    return execute(config, output_dir, method=method, budget=budget, seed=seed)
 
 
 def evaluate_design(config, design, orders, tolerance=0.005):
@@ -93,7 +51,8 @@ def evaluate_run(run_dir, orders, tolerance=0.005, policy=True):
         from .environment import MetagratingEnv
         model, saved_config = load_policy(run / "checkpoint.pt", device="cpu")
         env = MetagratingEnv(saved_config.physics, horizon=saved_config.training.horizon,
-                             reward_mode=saved_config.training.reward_mode)
+                             reward_mode=saved_config.training.reward_mode,
+                             episode_mode=saved_config.training.episode_mode)
         obs, _ = env.reset(seed=saved_config.training.seed)
         done = False
         trajectory = []

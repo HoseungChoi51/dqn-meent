@@ -35,3 +35,43 @@
 
 .trial-artifacts{display:flex;align-items:center;flex-wrap:wrap;gap:10px;margin:20px 0;font-size:10px}.trial-artifacts a{display:flex;align-items:center;gap:4px;color:#789468}.trial-artifacts .text-button{font-size:10px}
 .feedback-section .field{margin-top:16px}.feedback-actions{flex-wrap:wrap;margin-top:12px}.feedback-critique{border-top:1px solid var(--line);margin-top:18px;padding-top:15px}.feedback-run{border:1px solid var(--line);border-radius:7px;padding:13px;margin-top:15px;font-size:11px}.feedback-run .row-between{gap:12px;flex-wrap:wrap}.dossier-section.callout h4{font-size:11px;color:#657d53;margin:14px 0 7px}.dossier-section.callout>.text-content{font-size:12px;color:#7c8c6d;line-height:1.85}
+/* Implementation and campaign memory surfaces use the existing workbench system. */
+.manager-issue { border: 1px solid var(--border, #ddd); border-left: 3px solid #a77c36; border-radius: 8px; padding: 14px; margin: 0 0 14px; }
+.manager-issue .inline-actions { margin-top: 10px; flex-wrap: wrap; }
+.memory-editor { width: 100%; min-height: 280px; line-height: 1.6; }
+.evidence-plot { width: 100%; max-height: 330px; margin: 12px 0; }
+.evidence-panel-body { padding: 0 20px 20px; }
+.confirmation-roster .data-table { table-layout: fixed; white-space: normal; }
+.confirmation-roster .data-table th, .confirmation-roster .data-table td { padding: 12px 10px; overflow-wrap: anywhere; vertical-align: top; }
+.confirmation-roster .data-table td:first-child { min-width: 0; }
+.confirmation-roster .data-table small { display: block; margin-top: 5px; }
+.evidence-plot text { fill: #526773; font-size: 11px; }
+.checkbox-label { display: flex; align-items: center; gap: 8px; margin: 12px 0; }
+.diagnostic-editor { margin: 18px 0; }
+.diagnostic-editor fieldset { border: 1px solid #dfe7d6; border-radius: 8px; padding: 16px; margin: 14px 0; min-width: 0; }
+.diagnostic-editor legend { padding: 0 6px; color: #527247; font-size: 12px; font-weight: 600; }
+.diagnostic-editor .diagnostic-recipes { margin: 14px 0; }
+.diagnostic-editor input[type="checkbox"] { width: 18px; height: 18px; align-self: flex-start; }
+
+.pending-commands { margin-bottom: 24px; padding: 18px; border: 1px solid var(--line); border-radius: 9px; background: #fffdf6; }
+.pending-commands p { margin-top: 6px; font-size: 12px; }
+.pending-command { gap: 16px; margin-top: 14px; padding-top: 12px; border-top: 1px solid var(--line); flex-wrap: wrap; }
+.pending-command strong { text-transform: capitalize; }
+/* Deliberately plain, bounded live file viewer for agent debugging. */
+.agent-log-controls { display: flex; flex-wrap: wrap; align-items: center; gap: .6rem; }
+.agent-log-controls label { display: flex; align-items: center; gap: .3rem; }
+.agent-log-controls select, .agent-log-controls input { max-width: 18rem; }
+.agent-log-lines { max-height: 60vh; min-height: 12rem; overflow: auto; padding: .6rem; background: #111827; color: #e5e7eb; font: 12px/1.6 monospace; overflow-wrap: anywhere; }
+.agent-log-inspect { padding: 0 .4rem; margin-right: .4rem; color: #93c5fd; background: none; border: 1px solid #475569; cursor: pointer; }
+.agent-log pre { white-space: pre-wrap; overflow-wrap: anywhere; max-height: 35vh; overflow: auto; }
+.discovery-panel > p { max-width: 80ch; }
+.discovery-start, .discovery-panel > form { display: grid; gap: 1rem; margin: 1rem 0; }
+.discovery-agenda { display: grid; gap: 1rem; margin: 1.5rem 0; }
+.discovery-agenda article { border: 1px solid var(--line, #ddd); padding: 1rem; border-radius: 6px; }
+.discovery-panel pre { white-space: pre-wrap; overflow-wrap: anywhere; max-height: 36rem; overflow: auto; }
+.discovery-dialogue { margin: 1.5rem 0; }
+.discovery-message { padding: 1.1rem; margin: 1rem 0; border: 1px solid var(--border, #d8dde3); border-left: 4px solid #608479; border-radius: 6px; background: var(--surface, #fff); }
+.discovery-prose { white-space: pre-wrap; overflow-wrap: anywhere; line-height: 1.65; }
+.discovery-message details { margin: .7rem 0; }
+.discovery-evidence-fields dt { font-weight: 650; text-transform: capitalize; margin-top: .65rem; }
+.discovery-evidence-fields dd { margin: .25rem 0 .75rem .8rem; overflow-wrap: anywhere; }

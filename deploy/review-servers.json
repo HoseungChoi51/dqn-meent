@@ -1,0 +1,11 @@
+{
+  "directory": "runs/consolidation/experiment-controls-20260927/destination",
+  "frontend_directory": "runs/consolidation/experiment-controls-20260927/frontend-dist",
+  "workspace_port": 8791,
+  "implementation_port": 8790,
+  "tailnet_port": 8449,
+  "workers": 2,
+  "provider": "codex",
+  "model": "gpt-6-sol",
+  "llm_enabled": true
+}

@@ -209,6 +209,7 @@ def test_dashboard_reports_configure_later_and_coordinator_budgets_api_only(tmp_
                                       "status": "completed", "usage": usage})
         coordinator = app.state.coordinator
         monkeypatch.setattr(coordinator, "_thread", lambda record: None)
+        monkeypatch.setattr("optimization_framework.research.coordinator.provider_status", lambda: {"configured": True})
         started = coordinator.start(ResearchInput(campaign_id=campaign["id"], mode="discuss", message="Compare mechanisms."))
         assert started["request"]["llm_budget_usd"] == pytest.approx(.7)
         reservation_usage = {"billing_mode": "subscription", "cost_usd": None,

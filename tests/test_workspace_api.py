@@ -41,6 +41,20 @@ def create_campaign(client, name="API campaign"):
     return charter, state["tasks"]
 
 
+def test_state_cursor_advances_beyond_one_event_page_without_skipping_sse_history(client):
+    campaign, _ = create_campaign(client)
+    store = client.app.state.workspace.store
+    identities = [store.event(campaign["id"], "test.progress", {"sequence": index}) for index in range(250)]
+    state = client.get("/api/v1/state", params={"campaign_id": campaign["id"]}).json()
+    assert state["event_cursor"] == identities[-1]
+    assert len(state["events"]) == 200 and state["events"][-1]["id"] == identities[-1]
+    # The catch-up API keeps its ascending cursor behavior independently.
+    assert store.events(campaign["id"], after=identities[0], limit=3)[0]["id"] == identities[1]
+    latest = store.event(campaign["id"], "test.released", {})
+    refreshed = client.get("/api/v1/state", params={"campaign_id": campaign["id"]}).json()
+    assert refreshed["event_cursor"] >= latest > state["event_cursor"]
+
+
 def hypothesis(client, charter, **kwargs):
     payload = {"campaign_id": charter["id"], "title": "Mechanism with explicit assumptions",
                "algorithm": "block_tabu", "algorithm_config": {"max_block_size": 3},
@@ -149,7 +163,7 @@ def test_saved_feedback_is_not_a_model_call_and_revision_captures_exact_notes(cl
     assert store.list("trial", charter["id"]) == []
 
 
-def test_revision_rejects_foreign_feedback_archived_ideas_and_disabled_model(client, monkeypatch):
+def test_revision_queues_disabled_model_but_rejects_foreign_feedback_and_archived_ideas(client, monkeypatch):
     charter, _ = create_campaign(client)
     parent = hypothesis(client, charter)
     other = hypothesis(client, charter, title="A separate idea")
@@ -157,8 +171,9 @@ def test_revision_rejects_foreign_feedback_archived_ideas_and_disabled_model(cli
     payload = {"campaign_id": charter["id"], "mode": "evolve", "hypothesis_id": parent["id"],
                "feedback_review_ids": [note["id"]], "message": "Revise this idea."}
     response = client.post("/api/research", json=payload)
-    assert response.status_code == 409
-    assert "Saved comments remain" in response.json()["detail"]
+    assert response.status_code == 202
+    assert response.json()["status"] == "waiting_provider"
+    assert response.json()["feedback_snapshot"] == [note]
     monkeypatch.setattr("dqn_meent.workspace.coordinator.provider_status", lambda: {"configured": True})
     assert client.post("/api/research", json={**payload, "hypothesis_id": other["id"]}).status_code == 409
     assert client.post("/api/research", json={**payload, "feedback_review_ids": ["invented-review"]}).status_code == 409
@@ -269,51 +284,43 @@ def test_charter_revision_invalidates_old_action_without_spending_compute(client
     assert client.app.state.workspace.store.list("trial", charter["id"]) == []
 
 
-def test_offline_research_is_interactive_and_exports_rationale_without_fake_llm_usage(client):
+def test_offline_requests_are_saved_and_exported_without_fake_model_turns(client):
     charter, _ = create_campaign(client)
     submitted = client.post("/api/research", json={"campaign_id": charter["id"], "mode": "generate",
         "message": "Investigate boundary-preserving block moves before a long DQN training run."})
     assert submitted.status_code == 202, submitted.text
-    run_id = submitted.json()["id"]
     store = client.app.state.workspace.store
-    deadline = time.monotonic() + 10
-    while time.monotonic() < deadline:
-        run = store.get(run_id, "research_run")
-        if run["status"] not in {"running", "stopping"}:
-            break
-        time.sleep(.02)
-    assert run["status"] != "failed", run
-    assert run["status"] not in {"running", "stopping"}
-    assert run["usage"].get("calls", 0) == 0
+    assert submitted.json()["status"] == "waiting_provider"
+    assert store.list("research_run", charter["id"]) == []
     state = client.get("/api/state", params={"campaign_id": charter["id"]}).json()
     assert not state["settings"]["llm_configured"]
-    assert any("boundary-preserving" in str(item).lower() for item in state["hypotheses"])
+    assert any("boundary-preserving" in str(item).lower() for item in state["manager_commands"])
     report = client.get(f"/api/campaigns/{charter['id']}/export")
     assert report.status_code == 200
     assert "text/markdown" in report.headers["content-type"]
     assert "boundary-preserving" in report.text.lower()
-    assert "rationale_only" in report.text
+    assert len(store.list("manager_issue", charter["id"])) == 1
     assert state["trials"] == []
 
 
-def test_custom_execution_requires_verified_reviewed_source_and_rejects_substitution(client):
-    status = sandbox_status()
-    if not status["available"]:
-        pytest.skip(status["reason"])
+def test_legacy_protocol_verification_does_not_bypass_implementation_validation(client):
     charter, tasks = create_campaign(client)
     custom = hypothesis(client, charter, algorithm="custom", algorithm_config={"parameters": {"variant": "reviewed"}}, source=SOURCE)
     request = trial_payload(charter, tasks[0], algorithm="custom", hypothesis_id=custom["id"])
     assert client.post("/api/trials", json=request).status_code == 409
     client.post(f"/api/hypotheses/{custom['id']}/review", json={"text": "The source implements the dossier and stores all state explicitly."})
     verified = client.post(f"/api/hypotheses/{custom['id']}/verify", json={"n_cells": 8, "seed": 0})
-    assert verified.status_code == 200, verified.text
+    assert verified.status_code == 409
+    assert "implementation compute allocation" in verified.json()["detail"]
     stored = client.app.state.workspace.store.get(custom["id"], "hypothesis")
-    assert "verified" in stored["implementation_status"]
-    assert stored["executable"]
+    stored.update(implementation_status="verified", executable=True, verification={"verified": True})
+    client.app.state.workspace.store.put("hypothesis", stored)
     accepted = client.post("/api/trials", json=request)
-    assert accepted.status_code == 201, accepted.text
-    assert accepted.json()["algorithm_config"]["source"] == SOURCE
-    assert accepted.json()["algorithm_config"]["parameters"] == {"variant": "reviewed"}
+    assert accepted.status_code == 409
+    state = client.get('/api/state').json()
+    card = next(h for h in state['hypotheses'] if h['id'] == custom['id'])
+    assert card['implementation_readiness']['state'] == 'validation_required'
+    assert state['manager_issues']
     substituted = client.post("/api/trials", json={**request, "algorithm_config": {"source": SOURCE + "\n# Unreviewed revision"}})
     assert substituted.status_code == 409
 
@@ -325,6 +332,7 @@ def test_interrupted_provider_reservation_is_closed_once_without_refund_or_repla
     coordinator = client.app.state.coordinator
     workspace = client.app.state.workspace
     monkeypatch.setattr(coordinator, "_thread", lambda record: None)
+    monkeypatch.setattr("optimization_framework.research.coordinator.provider_status", lambda: {"configured": True})
     submitted = client.post("/api/research", json={"campaign_id": charter["id"], "message": "A request interrupted after reserving cost"})
     assert submitted.status_code == 202
     run_id = submitted.json()["id"]

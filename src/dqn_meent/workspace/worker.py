@@ -63,7 +63,8 @@ def _fingerprint(spec):
     # schedules. Every other specification field must be compatible on resume.
     scientific_fields = ("id", "campaign_id", "charter_version", "task_id", "algorithm",
                          "algorithm_config", "seed", "schedule_steps", "physics", "training",
-                         "validation_orders", "validation_tolerance", "archive_size", "source_hash")
+                         "validation_orders", "validation_tolerance", "archive_size", "source_hash",
+                         "implementation_version_id", "implementation_artifact_digest", "implementation_runtime_digest", "validation_report_id")
     identity = {key: spec[key] for key in scientific_fields if key in spec}
     return hashlib.sha256(json.dumps(identity, sort_keys=True, allow_nan=False).encode()).hexdigest()
 
@@ -112,6 +113,22 @@ class ExperimentWorker:
             if not orders:
                 raise ValueError("Validation requires validation_orders")
             self.orders = sorted(set(_integer(order, "validation order") for order in orders))
+        elif self.algorithm == "package":
+            from dqn_meent.implementations.models import digest
+            from dqn_meent.implementations.runtime import PackageOptimizer, tree_hashes
+            bundle = json.loads((self.directory / "implementation" / "bundle.json").read_text())
+            artifact, version = bundle["artifact"], bundle["version"]
+            package_dir = self.directory / "implementation" / "package"
+            if (digest(artifact) != self.spec["implementation_artifact_digest"] or
+                    version["id"] != self.spec["implementation_version_id"] or
+                    tree_hashes(package_dir) != version["package_hashes"] or
+                    artifact["runtime"]["digest"] != self.spec["implementation_runtime_digest"]):
+                raise ValueError("Pinned implementation changed after this experiment was queued")
+            from optimization_framework.implementations.runtime import bundle_runtime_root
+            self.optimizer = PackageOptimizer(package_dir, bundle_runtime_root(bundle, package_dir.parent), artifact["runtime"],
+                artifact["package"]["entrypoint"], {"n_cells": self.physics.n_cells, "seed": self.spec["seed"],
+                    "parameters": self.spec["algorithm_config"], "schedule_steps": self.schedule_steps,
+                    "problem": {"objective": "absolute_transmitted_order_+1"}, "capabilities": ["binary_forward"]})
         else:
             self.optimizer = make_optimizer(self.algorithm, self.physics.n_cells,
                                             _integer(self.spec.get("seed", 0), "seed", 0),
@@ -416,6 +433,9 @@ def run(directory, *, solver_factory=ForwardSolver):
                 try:
                     return worker.run()
                 finally:
+                    close_optimizer = getattr(getattr(worker, "optimizer", None), "close", None)
+                    if close_optimizer:
+                        close_optimizer()
                     for number, previous in handlers.items():
                         signal.signal(number, previous)
         except Exception as exc:

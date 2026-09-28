@@ -81,7 +81,7 @@ def tiny_config():
 
 
 def test_real_meent_training_and_exact_cpu_resume(tmp_path, monkeypatch):
-    from dqn_meent import training
+    from optimization_framework.execution.worker import ExperimentWorker, read_journal
 
     config = tiny_config()
     uninterrupted_dir = tmp_path / "full"
@@ -98,32 +98,34 @@ def test_real_meent_training_and_exact_cpu_resume(tmp_path, monkeypatch):
     with pytest.raises(FileExistsError):
         train(config, uninterrupted_dir)
 
-    class InterruptingEnv(training.MetagratingEnv):
-        actions_taken = 0
-
-        def step(self, action):
-            if self.actions_taken == 5:
-                raise RuntimeError("Simulated interruption after checkpoint")
-            self.actions_taken += 1
-            return super().step(action)
+    original_step = ExperimentWorker.one_step
+    def interrupted_step(worker):
+        if worker.optimizer.inspect()["decisions"] == 5:
+            raise RuntimeError("Simulated interruption after checkpoint")
+        return original_step(worker)
 
     interrupted_dir = tmp_path / "interrupted"
     with monkeypatch.context() as patch:
-        patch.setattr(training, "MetagratingEnv", InterruptingEnv)
+        patch.setattr(ExperimentWorker, "one_step", interrupted_step)
         with pytest.raises(RuntimeError, match="Simulated interruption"):
             train(config, interrupted_dir)
-    # Checkpoint is at 4, CSV is at 5: recovery must discard the extra row.
+    # The CSV is a logical projection; physical attempt evidence is never erased.
     with (interrupted_dir / "metrics.csv").open() as stream:
         assert len(list(csv.DictReader(stream))) == 5
+    original_evidence = read_journal(interrupted_dir / "observations.jsonl")
     resumed = train(config, interrupted_dir, resume=interrupted_dir / "checkpoint.pt")
     for key in ("steps", "updates", "episodes_completed", "best_efficiency",
-                "last_efficiency", "last_loss", "solver_calls", "cache_hits"):
+                "last_efficiency", "last_loss"):
         assert resumed[key] == uninterrupted[key]
+    assert resumed["evaluations"] > uninterrupted["evaluations"]
+    assert resumed["solver_calls"] >= uninterrupted["solver_calls"]
+    assert read_journal(interrupted_dir / "observations.jsonl")[:len(original_evidence)] == original_evidence
     with (interrupted_dir / "metrics.csv").open() as stream:
         resumed_rows = list(csv.DictReader(stream))
     for before, after in zip(rows, resumed_rows, strict=True):
-        assert {k: v for k, v in before.items() if k != "elapsed_seconds"} == {
-            k: v for k, v in after.items() if k != "elapsed_seconds"}
+        costs = {"elapsed_seconds", "evaluations", "solver_calls", "cache_hits"}
+        assert {k: v for k, v in before.items() if k not in costs} == {
+            k: v for k, v in after.items() if k not in costs}
     full_model, loaded_config = load_policy(uninterrupted_dir / "checkpoint.pt")
     resumed_model, _ = load_policy(interrupted_dir / "checkpoint.pt")
     assert loaded_config.physics == config.physics

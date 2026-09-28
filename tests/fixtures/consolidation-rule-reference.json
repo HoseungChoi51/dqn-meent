@@ -1,0 +1,2295 @@
+{
+  "schema_version": 1,
+  "source_hashes": {
+    "src/dqn_meent/__init__.py": "70b6212dbfab0a0332c6606c0f347dda3d41da3887011958a2525b1491822ce7",
+    "src/dqn_meent/__main__.py": "6d8b7d7846a845059d7a3107143f11131f63c5511d669b44085b15ec5e3d2279",
+    "src/dqn_meent/cli.py": "0afd9b4267e531408b2fb71c7141f00c53da12675a99a492dcb9fb367341fc24",
+    "src/dqn_meent/config.py": "c03552b2a6cf34c8fc7de0d709afe70d0b540f42148214a4f4cc0407ea05b2d3",
+    "src/dqn_meent/dqn.py": "4a44e2abe61f75cd7fd1100125b0458a2ccba5e4a1743dbdf4d14665721b2807",
+    "src/dqn_meent/environment.py": "9479cf4e3ed31966a1ae6208cad51b531d0ee8cbca2d14ba75eedaa5c7ab3e09",
+    "src/dqn_meent/experiments.py": "1560f44441a606ce25e1b9b2c7223704050cb36f85856df80da9a24d679305dc",
+    "src/dqn_meent/fields.py": "659d5adf9d7b7a4dd632fd8f75ad679c2e4a86c6c64a9b94a792b6b8a4161966",
+    "src/dqn_meent/physics.py": "9fcffbdb9094c76405299ab198ef0fc36a3ea793e09bc1c2e2819746c62adb0b",
+    "src/dqn_meent/replication.py": "68a0500c5d5b2a5a89e779aec7243d4f5d5c2ac5a2ac79d0de503a28b8cd16a6",
+    "src/dqn_meent/replication_diagnostics.py": "405a0b46988921d0d64dad48a96430ad4693d358aa6a2f248ae89825265e7784",
+    "src/dqn_meent/tracking.py": "5db71220a4d37a8a7377f1651a4435ade40031921c9c759288b934187b30a5c3",
+    "src/dqn_meent/training.py": "0eaad64f388241264dd31066a1efaad97bbf9a55d79293ba06b667fb86852572"
+  },
+  "evidence_kind": "preserved_sibling_rule_fixtures",
+  "selection": [
+    {
+      "name": "median",
+      "rows": [
+        {
+          "profile": "P",
+          "seed": 10,
+          "phase": "development",
+          "status": "completed",
+          "converged": true,
+          "efficiency_F320": 0.8,
+          "elapsed_seconds": 10
+        },
+        {
+          "profile": "P",
+          "seed": 11,
+          "phase": "development",
+          "status": "completed",
+          "converged": true,
+          "efficiency_F320": 0.81,
+          "elapsed_seconds": 10
+        },
+        {
+          "profile": "P",
+          "seed": 12,
+          "phase": "development",
+          "status": "completed",
+          "converged": true,
+          "efficiency_F320": 0.82,
+          "elapsed_seconds": 10
+        },
+        {
+          "profile": "C",
+          "seed": 10,
+          "phase": "development",
+          "status": "completed",
+          "converged": true,
+          "efficiency_F320": 0.82,
+          "elapsed_seconds": 10
+        },
+        {
+          "profile": "C",
+          "seed": 11,
+          "phase": "development",
+          "status": "completed",
+          "converged": true,
+          "efficiency_F320": 0.82,
+          "elapsed_seconds": 10
+        },
+        {
+          "profile": "C",
+          "seed": 12,
+          "phase": "development",
+          "status": "completed",
+          "converged": true,
+          "efficiency_F320": 0.83,
+          "elapsed_seconds": 10
+        }
+      ],
+      "expected": {
+        "selected_profile": "C",
+        "candidates": [
+          {
+            "profile": "P",
+            "median": 0.81,
+            "maximum": 0.82,
+            "elapsed_seconds": 30
+          },
+          {
+            "profile": "C",
+            "median": 0.82,
+            "maximum": 0.83,
+            "elapsed_seconds": 30
+          }
+        ],
+        "selection": {
+          "profile": "C",
+          "median": 0.82,
+          "maximum": 0.83,
+          "elapsed_seconds": 30
+        },
+        "rule": "median F320; ties within 0.05 pp: max, elapsed time, profile ID"
+      }
+    },
+    {
+      "name": "missing_seed",
+      "rows": [
+        {
+          "profile": "P",
+          "seed": 10,
+          "phase": "development",
+          "status": "completed",
+          "converged": true,
+          "efficiency_F320": 0.8,
+          "elapsed_seconds": 10
+        },
+        {
+          "profile": "P",
+          "seed": 11,
+          "phase": "development",
+          "status": "completed",
+          "converged": true,
+          "efficiency_F320": 0.81,
+          "elapsed_seconds": 10
+        },
+        {
+          "profile": "P",
+          "seed": 12,
+          "phase": "development",
+          "status": "completed",
+          "converged": true,
+          "efficiency_F320": 0.82,
+          "elapsed_seconds": 10
+        },
+        {
+          "profile": "C",
+          "seed": 10,
+          "phase": "development",
+          "status": "completed",
+          "converged": true,
+          "efficiency_F320": 0.82,
+          "elapsed_seconds": 10
+        },
+        {
+          "profile": "C",
+          "seed": 11,
+          "phase": "development",
+          "status": "completed",
+          "converged": true,
+          "efficiency_F320": 0.82,
+          "elapsed_seconds": 10
+        }
+      ],
+      "expected": {
+        "selected_profile": "P",
+        "candidates": [
+          {
+            "profile": "P",
+            "median": 0.81,
+            "maximum": 0.82,
+            "elapsed_seconds": 30
+          }
+        ],
+        "selection": {
+          "profile": "P",
+          "median": 0.81,
+          "maximum": 0.82,
+          "elapsed_seconds": 30
+        },
+        "rule": "median F320; ties within 0.05 pp: max, elapsed time, profile ID"
+      }
+    },
+    {
+      "name": "tie_maximum",
+      "rows": [
+        {
+          "profile": "P",
+          "seed": 10,
+          "phase": "development",
+          "status": "completed",
+          "converged": true,
+          "efficiency_F320": 0.8,
+          "elapsed_seconds": 10
+        },
+        {
+          "profile": "P",
+          "seed": 11,
+          "phase": "development",
+          "status": "completed",
+          "converged": true,
+          "efficiency_F320": 0.82,
+          "elapsed_seconds": 10
+        },
+        {
+          "profile": "P",
+          "seed": 12,
+          "phase": "development",
+          "status": "completed",
+          "converged": true,
+          "efficiency_F320": 0.84,
+          "elapsed_seconds": 10
+        },
+        {
+          "profile": "C",
+          "seed": 10,
+          "phase": "development",
+          "status": "completed",
+          "converged": true,
+          "efficiency_F320": 0.81,
+          "elapsed_seconds": 10
+        },
+        {
+          "profile": "C",
+          "seed": 11,
+          "phase": "development",
+          "status": "completed",
+          "converged": true,
+          "efficiency_F320": 0.8204,
+          "elapsed_seconds": 10
+        },
+        {
+          "profile": "C",
+          "seed": 12,
+          "phase": "development",
+          "status": "completed",
+          "converged": true,
+          "efficiency_F320": 0.83,
+          "elapsed_seconds": 10
+        }
+      ],
+      "expected": {
+        "selected_profile": "P",
+        "candidates": [
+          {
+            "profile": "P",
+            "median": 0.82,
+            "maximum": 0.84,
+            "elapsed_seconds": 30
+          },
+          {
+            "profile": "C",
+            "median": 0.8204,
+            "maximum": 0.83,
+            "elapsed_seconds": 30
+          }
+        ],
+        "selection": {
+          "profile": "P",
+          "median": 0.82,
+          "maximum": 0.84,
+          "elapsed_seconds": 30
+        },
+        "rule": "median F320; ties within 0.05 pp: max, elapsed time, profile ID"
+      }
+    },
+    {
+      "name": "tie_elapsed",
+      "rows": [
+        {
+          "profile": "P",
+          "seed": 10,
+          "phase": "development",
+          "status": "completed",
+          "converged": true,
+          "efficiency_F320": 0.8,
+          "elapsed_seconds": 10
+        },
+        {
+          "profile": "P",
+          "seed": 11,
+          "phase": "development",
+          "status": "completed",
+          "converged": true,
+          "efficiency_F320": 0.82,
+          "elapsed_seconds": 10
+        },
+        {
+          "profile": "P",
+          "seed": 12,
+          "phase": "development",
+          "status": "completed",
+          "converged": true,
+          "efficiency_F320": 0.84,
+          "elapsed_seconds": 10
+        },
+        {
+          "profile": "C",
+          "seed": 10,
+          "phase": "development",
+          "status": "completed",
+          "converged": true,
+          "efficiency_F320": 0.8,
+          "elapsed_seconds": 9
+        },
+        {
+          "profile": "C",
+          "seed": 11,
+          "phase": "development",
+          "status": "completed",
+          "converged": true,
+          "efficiency_F320": 0.82,
+          "elapsed_seconds": 9
+        },
+        {
+          "profile": "C",
+          "seed": 12,
+          "phase": "development",
+          "status": "completed",
+          "converged": true,
+          "efficiency_F320": 0.84,
+          "elapsed_seconds": 9
+        }
+      ],
+      "expected": {
+        "selected_profile": "C",
+        "candidates": [
+          {
+            "profile": "P",
+            "median": 0.82,
+            "maximum": 0.84,
+            "elapsed_seconds": 30
+          },
+          {
+            "profile": "C",
+            "median": 0.82,
+            "maximum": 0.84,
+            "elapsed_seconds": 27
+          }
+        ],
+        "selection": {
+          "profile": "C",
+          "median": 0.82,
+          "maximum": 0.84,
+          "elapsed_seconds": 27
+        },
+        "rule": "median F320; ties within 0.05 pp: max, elapsed time, profile ID"
+      }
+    },
+    {
+      "name": "tie_identifier",
+      "rows": [
+        {
+          "profile": "P",
+          "seed": 10,
+          "phase": "development",
+          "status": "completed",
+          "converged": true,
+          "efficiency_F320": 0.8,
+          "elapsed_seconds": 10
+        },
+        {
+          "profile": "P",
+          "seed": 11,
+          "phase": "development",
+          "status": "completed",
+          "converged": true,
+          "efficiency_F320": 0.82,
+          "elapsed_seconds": 10
+        },
+        {
+          "profile": "P",
+          "seed": 12,
+          "phase": "development",
+          "status": "completed",
+          "converged": true,
+          "efficiency_F320": 0.84,
+          "elapsed_seconds": 10
+        },
+        {
+          "profile": "C",
+          "seed": 10,
+          "phase": "development",
+          "status": "completed",
+          "converged": true,
+          "efficiency_F320": 0.8,
+          "elapsed_seconds": 10
+        },
+        {
+          "profile": "C",
+          "seed": 11,
+          "phase": "development",
+          "status": "completed",
+          "converged": true,
+          "efficiency_F320": 0.82,
+          "elapsed_seconds": 10
+        },
+        {
+          "profile": "C",
+          "seed": 12,
+          "phase": "development",
+          "status": "completed",
+          "converged": true,
+          "efficiency_F320": 0.84,
+          "elapsed_seconds": 10
+        }
+      ],
+      "expected": {
+        "selected_profile": "C",
+        "candidates": [
+          {
+            "profile": "P",
+            "median": 0.82,
+            "maximum": 0.84,
+            "elapsed_seconds": 30
+          },
+          {
+            "profile": "C",
+            "median": 0.82,
+            "maximum": 0.84,
+            "elapsed_seconds": 30
+          }
+        ],
+        "selection": {
+          "profile": "C",
+          "median": 0.82,
+          "maximum": 0.84,
+          "elapsed_seconds": 30
+        },
+        "rule": "median F320; ties within 0.05 pp: max, elapsed time, profile ID"
+      }
+    },
+    {
+      "name": "incomplete",
+      "rows": [
+        {
+          "profile": "P",
+          "seed": 10,
+          "phase": "development",
+          "status": "completed",
+          "converged": true,
+          "efficiency_F320": 0.8,
+          "elapsed_seconds": 10
+        },
+        {
+          "profile": "P",
+          "seed": 11,
+          "phase": "development",
+          "status": "completed",
+          "converged": true,
+          "efficiency_F320": 0.82,
+          "elapsed_seconds": 10
+        }
+      ],
+      "expected": null
+    },
+    {
+      "name": "failed_validation",
+      "rows": [
+        {
+          "profile": "P",
+          "seed": 10,
+          "phase": "development",
+          "status": "completed",
+          "converged": true,
+          "efficiency_F320": 0.8,
+          "elapsed_seconds": 10
+        },
+        {
+          "profile": "P",
+          "seed": 11,
+          "phase": "development",
+          "status": "completed",
+          "converged": true,
+          "efficiency_F320": 0.81,
+          "elapsed_seconds": 10
+        },
+        {
+          "profile": "P",
+          "seed": 12,
+          "phase": "development",
+          "status": "completed",
+          "converged": true,
+          "efficiency_F320": 0.82,
+          "elapsed_seconds": 10
+        },
+        {
+          "profile": "C",
+          "seed": 10,
+          "phase": "development",
+          "status": "completed",
+          "converged": true,
+          "efficiency_F320": 0.82,
+          "elapsed_seconds": 10
+        },
+        {
+          "profile": "C",
+          "seed": 11,
+          "phase": "development",
+          "status": "completed",
+          "converged": true,
+          "efficiency_F320": 0.82,
+          "elapsed_seconds": 10
+        },
+        {
+          "profile": "C",
+          "seed": 12,
+          "phase": "development",
+          "status": "completed",
+          "converged": false,
+          "efficiency_F320": 0.83,
+          "elapsed_seconds": 10
+        }
+      ],
+      "expected": {
+        "selected_profile": "P",
+        "candidates": [
+          {
+            "profile": "P",
+            "median": 0.81,
+            "maximum": 0.82,
+            "elapsed_seconds": 30
+          }
+        ],
+        "selection": {
+          "profile": "P",
+          "median": 0.81,
+          "maximum": 0.82,
+          "elapsed_seconds": 30
+        },
+        "rule": "median F320; ties within 0.05 pp: max, elapsed time, profile ID"
+      }
+    }
+  ],
+  "verdict": [
+    {
+      "name": "0_wins",
+      "rows": [
+        {
+          "kind": "hc",
+          "seed": 100,
+          "phase": "control",
+          "status": "completed",
+          "converged": true,
+          "efficiency_F480": 0.8
+        },
+        {
+          "kind": "hc",
+          "seed": 101,
+          "phase": "control",
+          "status": "completed",
+          "converged": true,
+          "efficiency_F480": 0.8
+        },
+        {
+          "kind": "hc",
+          "seed": 102,
+          "phase": "control",
+          "status": "completed",
+          "converged": true,
+          "efficiency_F480": 0.8
+        },
+        {
+          "kind": "hc",
+          "seed": 103,
+          "phase": "control",
+          "status": "completed",
+          "converged": true,
+          "efficiency_F480": 0.8
+        },
+        {
+          "kind": "hc",
+          "seed": 104,
+          "phase": "control",
+          "status": "completed",
+          "converged": true,
+          "efficiency_F480": 0.8
+        },
+        {
+          "kind": "refine",
+          "seed": 100,
+          "phase": "control",
+          "status": "completed",
+          "converged": true,
+          "efficiency_F480": 0.8
+        },
+        {
+          "kind": "refine",
+          "seed": 101,
+          "phase": "control",
+          "status": "completed",
+          "converged": true,
+          "efficiency_F480": 0.8
+        },
+        {
+          "kind": "refine",
+          "seed": 102,
+          "phase": "control",
+          "status": "completed",
+          "converged": true,
+          "efficiency_F480": 0.8
+        },
+        {
+          "kind": "refine",
+          "seed": 103,
+          "phase": "control",
+          "status": "completed",
+          "converged": true,
+          "efficiency_F480": 0.8
+        },
+        {
+          "kind": "refine",
+          "seed": 104,
+          "phase": "control",
+          "status": "completed",
+          "converged": true,
+          "efficiency_F480": 0.8
+        },
+        {
+          "kind": "train",
+          "profile": "C",
+          "seed": 100,
+          "phase": "confirmation",
+          "status": "completed",
+          "converged": true,
+          "efficiency_F480": 0.81
+        },
+        {
+          "kind": "train",
+          "profile": "C",
+          "seed": 101,
+          "phase": "confirmation",
+          "status": "completed",
+          "converged": true,
+          "efficiency_F480": 0.81
+        },
+        {
+          "kind": "train",
+          "profile": "C",
+          "seed": 102,
+          "phase": "confirmation",
+          "status": "completed",
+          "converged": true,
+          "efficiency_F480": 0.81
+        },
+        {
+          "kind": "train",
+          "profile": "C",
+          "seed": 103,
+          "phase": "confirmation",
+          "status": "completed",
+          "converged": true,
+          "efficiency_F480": 0.81
+        },
+        {
+          "kind": "train",
+          "profile": "C",
+          "seed": 104,
+          "phase": "confirmation",
+          "status": "completed",
+          "converged": true,
+          "efficiency_F480": 0.81
+        }
+      ],
+      "selected": "C",
+      "references": [
+        {
+          "method": "paper",
+          "converged": true,
+          "efficiency_F480": 0.95
+        },
+        {
+          "method": "refine",
+          "converged": true,
+          "efficiency_F480": 0.82
+        }
+      ],
+      "expected": {
+        "verdict": "no_demonstrated_reproducible_advantage",
+        "selected_profile": "C",
+        "complete": true,
+        "hc_best": 0.82,
+        "required_gain": 0.005,
+        "winning_seeds": [],
+        "complete_rl_seeds": [
+          100,
+          101,
+          102,
+          103,
+          104
+        ],
+        "complete_hc_runs": 10,
+        "scope": "Only this condition, these DQN variants, MEENT physics, and the bounded effort."
+      }
+    },
+    {
+      "name": "1_wins",
+      "rows": [
+        {
+          "kind": "hc",
+          "seed": 100,
+          "phase": "control",
+          "status": "completed",
+          "converged": true,
+          "efficiency_F480": 0.8
+        },
+        {
+          "kind": "hc",
+          "seed": 101,
+          "phase": "control",
+          "status": "completed",
+          "converged": true,
+          "efficiency_F480": 0.8
+        },
+        {
+          "kind": "hc",
+          "seed": 102,
+          "phase": "control",
+          "status": "completed",
+          "converged": true,
+          "efficiency_F480": 0.8
+        },
+        {
+          "kind": "hc",
+          "seed": 103,
+          "phase": "control",
+          "status": "completed",
+          "converged": true,
+          "efficiency_F480": 0.8
+        },
+        {
+          "kind": "hc",
+          "seed": 104,
+          "phase": "control",
+          "status": "completed",
+          "converged": true,
+          "efficiency_F480": 0.8
+        },
+        {
+          "kind": "refine",
+          "seed": 100,
+          "phase": "control",
+          "status": "completed",
+          "converged": true,
+          "efficiency_F480": 0.8
+        },
+        {
+          "kind": "refine",
+          "seed": 101,
+          "phase": "control",
+          "status": "completed",
+          "converged": true,
+          "efficiency_F480": 0.8
+        },
+        {
+          "kind": "refine",
+          "seed": 102,
+          "phase": "control",
+          "status": "completed",
+          "converged": true,
+          "efficiency_F480": 0.8
+        },
+        {
+          "kind": "refine",
+          "seed": 103,
+          "phase": "control",
+          "status": "completed",
+          "converged": true,
+          "efficiency_F480": 0.8
+        },
+        {
+          "kind": "refine",
+          "seed": 104,
+          "phase": "control",
+          "status": "completed",
+          "converged": true,
+          "efficiency_F480": 0.8
+        },
+        {
+          "kind": "train",
+          "profile": "C",
+          "seed": 100,
+          "phase": "confirmation",
+          "status": "completed",
+          "converged": true,
+          "efficiency_F480": 0.83
+        },
+        {
+          "kind": "train",
+          "profile": "C",
+          "seed": 101,
+          "phase": "confirmation",
+          "status": "completed",
+          "converged": true,
+          "efficiency_F480": 0.81
+        },
+        {
+          "kind": "train",
+          "profile": "C",
+          "seed": 102,
+          "phase": "confirmation",
+          "status": "completed",
+          "converged": true,
+          "efficiency_F480": 0.81
+        },
+        {
+          "kind": "train",
+          "profile": "C",
+          "seed": 103,
+          "phase": "confirmation",
+          "status": "completed",
+          "converged": true,
+          "efficiency_F480": 0.81
+        },
+        {
+          "kind": "train",
+          "profile": "C",
+          "seed": 104,
+          "phase": "confirmation",
+          "status": "completed",
+          "converged": true,
+          "efficiency_F480": 0.81
+        }
+      ],
+      "selected": "C",
+      "references": [
+        {
+          "method": "paper",
+          "converged": true,
+          "efficiency_F480": 0.95
+        },
+        {
+          "method": "refine",
+          "converged": true,
+          "efficiency_F480": 0.82
+        }
+      ],
+      "expected": {
+        "verdict": "isolated_improvement",
+        "selected_profile": "C",
+        "complete": true,
+        "hc_best": 0.82,
+        "required_gain": 0.005,
+        "winning_seeds": [
+          100
+        ],
+        "complete_rl_seeds": [
+          100,
+          101,
+          102,
+          103,
+          104
+        ],
+        "complete_hc_runs": 10,
+        "scope": "Only this condition, these DQN variants, MEENT physics, and the bounded effort."
+      }
+    },
+    {
+      "name": "2_wins",
+      "rows": [
+        {
+          "kind": "hc",
+          "seed": 100,
+          "phase": "control",
+          "status": "completed",
+          "converged": true,
+          "efficiency_F480": 0.8
+        },
+        {
+          "kind": "hc",
+          "seed": 101,
+          "phase": "control",
+          "status": "completed",
+          "converged": true,
+          "efficiency_F480": 0.8
+        },
+        {
+          "kind": "hc",
+          "seed": 102,
+          "phase": "control",
+          "status": "completed",
+          "converged": true,
+          "efficiency_F480": 0.8
+        },
+        {
+          "kind": "hc",
+          "seed": 103,
+          "phase": "control",
+          "status": "completed",
+          "converged": true,
+          "efficiency_F480": 0.8
+        },
+        {
+          "kind": "hc",
+          "seed": 104,
+          "phase": "control",
+          "status": "completed",
+          "converged": true,
+          "efficiency_F480": 0.8
+        },
+        {
+          "kind": "refine",
+          "seed": 100,
+          "phase": "control",
+          "status": "completed",
+          "converged": true,
+          "efficiency_F480": 0.8
+        },
+        {
+          "kind": "refine",
+          "seed": 101,
+          "phase": "control",
+          "status": "completed",
+          "converged": true,
+          "efficiency_F480": 0.8
+        },
+        {
+          "kind": "refine",
+          "seed": 102,
+          "phase": "control",
+          "status": "completed",
+          "converged": true,
+          "efficiency_F480": 0.8
+        },
+        {
+          "kind": "refine",
+          "seed": 103,
+          "phase": "control",
+          "status": "completed",
+          "converged": true,
+          "efficiency_F480": 0.8
+        },
+        {
+          "kind": "refine",
+          "seed": 104,
+          "phase": "control",
+          "status": "completed",
+          "converged": true,
+          "efficiency_F480": 0.8
+        },
+        {
+          "kind": "train",
+          "profile": "C",
+          "seed": 100,
+          "phase": "confirmation",
+          "status": "completed",
+          "converged": true,
+          "efficiency_F480": 0.83
+        },
+        {
+          "kind": "train",
+          "profile": "C",
+          "seed": 101,
+          "phase": "confirmation",
+          "status": "completed",
+          "converged": true,
+          "efficiency_F480": 0.83
+        },
+        {
+          "kind": "train",
+          "profile": "C",
+          "seed": 102,
+          "phase": "confirmation",
+          "status": "completed",
+          "converged": true,
+          "efficiency_F480": 0.81
+        },
+        {
+          "kind": "train",
+          "profile": "C",
+          "seed": 103,
+          "phase": "confirmation",
+          "status": "completed",
+          "converged": true,
+          "efficiency_F480": 0.81
+        },
+        {
+          "kind": "train",
+          "profile": "C",
+          "seed": 104,
+          "phase": "confirmation",
+          "status": "completed",
+          "converged": true,
+          "efficiency_F480": 0.81
+        }
+      ],
+      "selected": "C",
+      "references": [
+        {
+          "method": "paper",
+          "converged": true,
+          "efficiency_F480": 0.95
+        },
+        {
+          "method": "refine",
+          "converged": true,
+          "efficiency_F480": 0.82
+        }
+      ],
+      "expected": {
+        "verdict": "isolated_improvement",
+        "selected_profile": "C",
+        "complete": true,
+        "hc_best": 0.82,
+        "required_gain": 0.005,
+        "winning_seeds": [
+          100,
+          101
+        ],
+        "complete_rl_seeds": [
+          100,
+          101,
+          102,
+          103,
+          104
+        ],
+        "complete_hc_runs": 10,
+        "scope": "Only this condition, these DQN variants, MEENT physics, and the bounded effort."
+      }
+    },
+    {
+      "name": "3_wins",
+      "rows": [
+        {
+          "kind": "hc",
+          "seed": 100,
+          "phase": "control",
+          "status": "completed",
+          "converged": true,
+          "efficiency_F480": 0.8
+        },
+        {
+          "kind": "hc",
+          "seed": 101,
+          "phase": "control",
+          "status": "completed",
+          "converged": true,
+          "efficiency_F480": 0.8
+        },
+        {
+          "kind": "hc",
+          "seed": 102,
+          "phase": "control",
+          "status": "completed",
+          "converged": true,
+          "efficiency_F480": 0.8
+        },
+        {
+          "kind": "hc",
+          "seed": 103,
+          "phase": "control",
+          "status": "completed",
+          "converged": true,
+          "efficiency_F480": 0.8
+        },
+        {
+          "kind": "hc",
+          "seed": 104,
+          "phase": "control",
+          "status": "completed",
+          "converged": true,
+          "efficiency_F480": 0.8
+        },
+        {
+          "kind": "refine",
+          "seed": 100,
+          "phase": "control",
+          "status": "completed",
+          "converged": true,
+          "efficiency_F480": 0.8
+        },
+        {
+          "kind": "refine",
+          "seed": 101,
+          "phase": "control",
+          "status": "completed",
+          "converged": true,
+          "efficiency_F480": 0.8
+        },
+        {
+          "kind": "refine",
+          "seed": 102,
+          "phase": "control",
+          "status": "completed",
+          "converged": true,
+          "efficiency_F480": 0.8
+        },
+        {
+          "kind": "refine",
+          "seed": 103,
+          "phase": "control",
+          "status": "completed",
+          "converged": true,
+          "efficiency_F480": 0.8
+        },
+        {
+          "kind": "refine",
+          "seed": 104,
+          "phase": "control",
+          "status": "completed",
+          "converged": true,
+          "efficiency_F480": 0.8
+        },
+        {
+          "kind": "train",
+          "profile": "C",
+          "seed": 100,
+          "phase": "confirmation",
+          "status": "completed",
+          "converged": true,
+          "efficiency_F480": 0.83
+        },
+        {
+          "kind": "train",
+          "profile": "C",
+          "seed": 101,
+          "phase": "confirmation",
+          "status": "completed",
+          "converged": true,
+          "efficiency_F480": 0.83
+        },
+        {
+          "kind": "train",
+          "profile": "C",
+          "seed": 102,
+          "phase": "confirmation",
+          "status": "completed",
+          "converged": true,
+          "efficiency_F480": 0.83
+        },
+        {
+          "kind": "train",
+          "profile": "C",
+          "seed": 103,
+          "phase": "confirmation",
+          "status": "completed",
+          "converged": true,
+          "efficiency_F480": 0.81
+        },
+        {
+          "kind": "train",
+          "profile": "C",
+          "seed": 104,
+          "phase": "confirmation",
+          "status": "completed",
+          "converged": true,
+          "efficiency_F480": 0.81
+        }
+      ],
+      "selected": "C",
+      "references": [
+        {
+          "method": "paper",
+          "converged": true,
+          "efficiency_F480": 0.95
+        },
+        {
+          "method": "refine",
+          "converged": true,
+          "efficiency_F480": 0.82
+        }
+      ],
+      "expected": {
+        "verdict": "reproducible_rl_advantage",
+        "selected_profile": "C",
+        "complete": true,
+        "hc_best": 0.82,
+        "required_gain": 0.005,
+        "winning_seeds": [
+          100,
+          101,
+          102
+        ],
+        "complete_rl_seeds": [
+          100,
+          101,
+          102,
+          103,
+          104
+        ],
+        "complete_hc_runs": 10,
+        "scope": "Only this condition, these DQN variants, MEENT physics, and the bounded effort."
+      }
+    },
+    {
+      "name": "4_wins",
+      "rows": [
+        {
+          "kind": "hc",
+          "seed": 100,
+          "phase": "control",
+          "status": "completed",
+          "converged": true,
+          "efficiency_F480": 0.8
+        },
+        {
+          "kind": "hc",
+          "seed": 101,
+          "phase": "control",
+          "status": "completed",
+          "converged": true,
+          "efficiency_F480": 0.8
+        },
+        {
+          "kind": "hc",
+          "seed": 102,
+          "phase": "control",
+          "status": "completed",
+          "converged": true,
+          "efficiency_F480": 0.8
+        },
+        {
+          "kind": "hc",
+          "seed": 103,
+          "phase": "control",
+          "status": "completed",
+          "converged": true,
+          "efficiency_F480": 0.8
+        },
+        {
+          "kind": "hc",
+          "seed": 104,
+          "phase": "control",
+          "status": "completed",
+          "converged": true,
+          "efficiency_F480": 0.8
+        },
+        {
+          "kind": "refine",
+          "seed": 100,
+          "phase": "control",
+          "status": "completed",
+          "converged": true,
+          "efficiency_F480": 0.8
+        },
+        {
+          "kind": "refine",
+          "seed": 101,
+          "phase": "control",
+          "status": "completed",
+          "converged": true,
+          "efficiency_F480": 0.8
+        },
+        {
+          "kind": "refine",
+          "seed": 102,
+          "phase": "control",
+          "status": "completed",
+          "converged": true,
+          "efficiency_F480": 0.8
+        },
+        {
+          "kind": "refine",
+          "seed": 103,
+          "phase": "control",
+          "status": "completed",
+          "converged": true,
+          "efficiency_F480": 0.8
+        },
+        {
+          "kind": "refine",
+          "seed": 104,
+          "phase": "control",
+          "status": "completed",
+          "converged": true,
+          "efficiency_F480": 0.8
+        },
+        {
+          "kind": "train",
+          "profile": "C",
+          "seed": 100,
+          "phase": "confirmation",
+          "status": "completed",
+          "converged": true,
+          "efficiency_F480": 0.83
+        },
+        {
+          "kind": "train",
+          "profile": "C",
+          "seed": 101,
+          "phase": "confirmation",
+          "status": "completed",
+          "converged": true,
+          "efficiency_F480": 0.83
+        },
+        {
+          "kind": "train",
+          "profile": "C",
+          "seed": 102,
+          "phase": "confirmation",
+          "status": "completed",
+          "converged": true,
+          "efficiency_F480": 0.83
+        },
+        {
+          "kind": "train",
+          "profile": "C",
+          "seed": 103,
+          "phase": "confirmation",
+          "status": "completed",
+          "converged": true,
+          "efficiency_F480": 0.83
+        },
+        {
+          "kind": "train",
+          "profile": "C",
+          "seed": 104,
+          "phase": "confirmation",
+          "status": "completed",
+          "converged": true,
+          "efficiency_F480": 0.81
+        }
+      ],
+      "selected": "C",
+      "references": [
+        {
+          "method": "paper",
+          "converged": true,
+          "efficiency_F480": 0.95
+        },
+        {
+          "method": "refine",
+          "converged": true,
+          "efficiency_F480": 0.82
+        }
+      ],
+      "expected": {
+        "verdict": "reproducible_rl_advantage",
+        "selected_profile": "C",
+        "complete": true,
+        "hc_best": 0.82,
+        "required_gain": 0.005,
+        "winning_seeds": [
+          100,
+          101,
+          102,
+          103
+        ],
+        "complete_rl_seeds": [
+          100,
+          101,
+          102,
+          103,
+          104
+        ],
+        "complete_hc_runs": 10,
+        "scope": "Only this condition, these DQN variants, MEENT physics, and the bounded effort."
+      }
+    },
+    {
+      "name": "5_wins",
+      "rows": [
+        {
+          "kind": "hc",
+          "seed": 100,
+          "phase": "control",
+          "status": "completed",
+          "converged": true,
+          "efficiency_F480": 0.8
+        },
+        {
+          "kind": "hc",
+          "seed": 101,
+          "phase": "control",
+          "status": "completed",
+          "converged": true,
+          "efficiency_F480": 0.8
+        },
+        {
+          "kind": "hc",
+          "seed": 102,
+          "phase": "control",
+          "status": "completed",
+          "converged": true,
+          "efficiency_F480": 0.8
+        },
+        {
+          "kind": "hc",
+          "seed": 103,
+          "phase": "control",
+          "status": "completed",
+          "converged": true,
+          "efficiency_F480": 0.8
+        },
+        {
+          "kind": "hc",
+          "seed": 104,
+          "phase": "control",
+          "status": "completed",
+          "converged": true,
+          "efficiency_F480": 0.8
+        },
+        {
+          "kind": "refine",
+          "seed": 100,
+          "phase": "control",
+          "status": "completed",
+          "converged": true,
+          "efficiency_F480": 0.8
+        },
+        {
+          "kind": "refine",
+          "seed": 101,
+          "phase": "control",
+          "status": "completed",
+          "converged": true,
+          "efficiency_F480": 0.8
+        },
+        {
+          "kind": "refine",
+          "seed": 102,
+          "phase": "control",
+          "status": "completed",
+          "converged": true,
+          "efficiency_F480": 0.8
+        },
+        {
+          "kind": "refine",
+          "seed": 103,
+          "phase": "control",
+          "status": "completed",
+          "converged": true,
+          "efficiency_F480": 0.8
+        },
+        {
+          "kind": "refine",
+          "seed": 104,
+          "phase": "control",
+          "status": "completed",
+          "converged": true,
+          "efficiency_F480": 0.8
+        },
+        {
+          "kind": "train",
+          "profile": "C",
+          "seed": 100,
+          "phase": "confirmation",
+          "status": "completed",
+          "converged": true,
+          "efficiency_F480": 0.83
+        },
+        {
+          "kind": "train",
+          "profile": "C",
+          "seed": 101,
+          "phase": "confirmation",
+          "status": "completed",
+          "converged": true,
+          "efficiency_F480": 0.83
+        },
+        {
+          "kind": "train",
+          "profile": "C",
+          "seed": 102,
+          "phase": "confirmation",
+          "status": "completed",
+          "converged": true,
+          "efficiency_F480": 0.83
+        },
+        {
+          "kind": "train",
+          "profile": "C",
+          "seed": 103,
+          "phase": "confirmation",
+          "status": "completed",
+          "converged": true,
+          "efficiency_F480": 0.83
+        },
+        {
+          "kind": "train",
+          "profile": "C",
+          "seed": 104,
+          "phase": "confirmation",
+          "status": "completed",
+          "converged": true,
+          "efficiency_F480": 0.83
+        }
+      ],
+      "selected": "C",
+      "references": [
+        {
+          "method": "paper",
+          "converged": true,
+          "efficiency_F480": 0.95
+        },
+        {
+          "method": "refine",
+          "converged": true,
+          "efficiency_F480": 0.82
+        }
+      ],
+      "expected": {
+        "verdict": "reproducible_rl_advantage",
+        "selected_profile": "C",
+        "complete": true,
+        "hc_best": 0.82,
+        "required_gain": 0.005,
+        "winning_seeds": [
+          100,
+          101,
+          102,
+          103,
+          104
+        ],
+        "complete_rl_seeds": [
+          100,
+          101,
+          102,
+          103,
+          104
+        ],
+        "complete_hc_runs": 10,
+        "scope": "Only this condition, these DQN variants, MEENT physics, and the bounded effort."
+      }
+    },
+    {
+      "name": "missing_control",
+      "rows": [
+        {
+          "kind": "hc",
+          "seed": 101,
+          "phase": "control",
+          "status": "completed",
+          "converged": true,
+          "efficiency_F480": 0.8
+        },
+        {
+          "kind": "hc",
+          "seed": 102,
+          "phase": "control",
+          "status": "completed",
+          "converged": true,
+          "efficiency_F480": 0.8
+        },
+        {
+          "kind": "hc",
+          "seed": 103,
+          "phase": "control",
+          "status": "completed",
+          "converged": true,
+          "efficiency_F480": 0.8
+        },
+        {
+          "kind": "hc",
+          "seed": 104,
+          "phase": "control",
+          "status": "completed",
+          "converged": true,
+          "efficiency_F480": 0.8
+        },
+        {
+          "kind": "refine",
+          "seed": 100,
+          "phase": "control",
+          "status": "completed",
+          "converged": true,
+          "efficiency_F480": 0.8
+        },
+        {
+          "kind": "refine",
+          "seed": 101,
+          "phase": "control",
+          "status": "completed",
+          "converged": true,
+          "efficiency_F480": 0.8
+        },
+        {
+          "kind": "refine",
+          "seed": 102,
+          "phase": "control",
+          "status": "completed",
+          "converged": true,
+          "efficiency_F480": 0.8
+        },
+        {
+          "kind": "refine",
+          "seed": 103,
+          "phase": "control",
+          "status": "completed",
+          "converged": true,
+          "efficiency_F480": 0.8
+        },
+        {
+          "kind": "refine",
+          "seed": 104,
+          "phase": "control",
+          "status": "completed",
+          "converged": true,
+          "efficiency_F480": 0.8
+        },
+        {
+          "kind": "train",
+          "profile": "C",
+          "seed": 100,
+          "phase": "confirmation",
+          "status": "completed",
+          "converged": true,
+          "efficiency_F480": 0.83
+        },
+        {
+          "kind": "train",
+          "profile": "C",
+          "seed": 101,
+          "phase": "confirmation",
+          "status": "completed",
+          "converged": true,
+          "efficiency_F480": 0.83
+        },
+        {
+          "kind": "train",
+          "profile": "C",
+          "seed": 102,
+          "phase": "confirmation",
+          "status": "completed",
+          "converged": true,
+          "efficiency_F480": 0.83
+        },
+        {
+          "kind": "train",
+          "profile": "C",
+          "seed": 103,
+          "phase": "confirmation",
+          "status": "completed",
+          "converged": true,
+          "efficiency_F480": 0.83
+        },
+        {
+          "kind": "train",
+          "profile": "C",
+          "seed": 104,
+          "phase": "confirmation",
+          "status": "completed",
+          "converged": true,
+          "efficiency_F480": 0.83
+        }
+      ],
+      "selected": "C",
+      "references": [
+        {
+          "method": "paper",
+          "converged": true,
+          "efficiency_F480": 0.95
+        },
+        {
+          "method": "refine",
+          "converged": true,
+          "efficiency_F480": 0.82
+        }
+      ],
+      "expected": {
+        "verdict": "inconclusive_execution",
+        "selected_profile": "C",
+        "complete": false,
+        "hc_best": 0.82,
+        "required_gain": 0.005,
+        "winning_seeds": [
+          100,
+          101,
+          102,
+          103,
+          104
+        ],
+        "complete_rl_seeds": [
+          100,
+          101,
+          102,
+          103,
+          104
+        ],
+        "complete_hc_runs": 9,
+        "scope": "Only this condition, these DQN variants, MEENT physics, and the bounded effort."
+      }
+    },
+    {
+      "name": "missing_reference",
+      "rows": [
+        {
+          "kind": "hc",
+          "seed": 100,
+          "phase": "control",
+          "status": "completed",
+          "converged": true,
+          "efficiency_F480": 0.8
+        },
+        {
+          "kind": "hc",
+          "seed": 101,
+          "phase": "control",
+          "status": "completed",
+          "converged": true,
+          "efficiency_F480": 0.8
+        },
+        {
+          "kind": "hc",
+          "seed": 102,
+          "phase": "control",
+          "status": "completed",
+          "converged": true,
+          "efficiency_F480": 0.8
+        },
+        {
+          "kind": "hc",
+          "seed": 103,
+          "phase": "control",
+          "status": "completed",
+          "converged": true,
+          "efficiency_F480": 0.8
+        },
+        {
+          "kind": "hc",
+          "seed": 104,
+          "phase": "control",
+          "status": "completed",
+          "converged": true,
+          "efficiency_F480": 0.8
+        },
+        {
+          "kind": "refine",
+          "seed": 100,
+          "phase": "control",
+          "status": "completed",
+          "converged": true,
+          "efficiency_F480": 0.8
+        },
+        {
+          "kind": "refine",
+          "seed": 101,
+          "phase": "control",
+          "status": "completed",
+          "converged": true,
+          "efficiency_F480": 0.8
+        },
+        {
+          "kind": "refine",
+          "seed": 102,
+          "phase": "control",
+          "status": "completed",
+          "converged": true,
+          "efficiency_F480": 0.8
+        },
+        {
+          "kind": "refine",
+          "seed": 103,
+          "phase": "control",
+          "status": "completed",
+          "converged": true,
+          "efficiency_F480": 0.8
+        },
+        {
+          "kind": "refine",
+          "seed": 104,
+          "phase": "control",
+          "status": "completed",
+          "converged": true,
+          "efficiency_F480": 0.8
+        },
+        {
+          "kind": "train",
+          "profile": "C",
+          "seed": 100,
+          "phase": "confirmation",
+          "status": "completed",
+          "converged": true,
+          "efficiency_F480": 0.83
+        },
+        {
+          "kind": "train",
+          "profile": "C",
+          "seed": 101,
+          "phase": "confirmation",
+          "status": "completed",
+          "converged": true,
+          "efficiency_F480": 0.83
+        },
+        {
+          "kind": "train",
+          "profile": "C",
+          "seed": 102,
+          "phase": "confirmation",
+          "status": "completed",
+          "converged": true,
+          "efficiency_F480": 0.83
+        },
+        {
+          "kind": "train",
+          "profile": "C",
+          "seed": 103,
+          "phase": "confirmation",
+          "status": "completed",
+          "converged": true,
+          "efficiency_F480": 0.83
+        },
+        {
+          "kind": "train",
+          "profile": "C",
+          "seed": 104,
+          "phase": "confirmation",
+          "status": "completed",
+          "converged": true,
+          "efficiency_F480": 0.83
+        }
+      ],
+      "selected": "C",
+      "references": [],
+      "expected": {
+        "verdict": "inconclusive_execution",
+        "selected_profile": "C",
+        "complete": false,
+        "hc_best": 0.8,
+        "required_gain": 0.005,
+        "winning_seeds": [
+          100,
+          101,
+          102,
+          103,
+          104
+        ],
+        "complete_rl_seeds": [
+          100,
+          101,
+          102,
+          103,
+          104
+        ],
+        "complete_hc_runs": 10,
+        "scope": "Only this condition, these DQN variants, MEENT physics, and the bounded effort."
+      }
+    },
+    {
+      "name": "failed_reference",
+      "rows": [
+        {
+          "kind": "hc",
+          "seed": 100,
+          "phase": "control",
+          "status": "completed",
+          "converged": true,
+          "efficiency_F480": 0.8
+        },
+        {
+          "kind": "hc",
+          "seed": 101,
+          "phase": "control",
+          "status": "completed",
+          "converged": true,
+          "efficiency_F480": 0.8
+        },
+        {
+          "kind": "hc",
+          "seed": 102,
+          "phase": "control",
+          "status": "completed",
+          "converged": true,
+          "efficiency_F480": 0.8
+        },
+        {
+          "kind": "hc",
+          "seed": 103,
+          "phase": "control",
+          "status": "completed",
+          "converged": true,
+          "efficiency_F480": 0.8
+        },
+        {
+          "kind": "hc",
+          "seed": 104,
+          "phase": "control",
+          "status": "completed",
+          "converged": true,
+          "efficiency_F480": 0.8
+        },
+        {
+          "kind": "refine",
+          "seed": 100,
+          "phase": "control",
+          "status": "completed",
+          "converged": true,
+          "efficiency_F480": 0.8
+        },
+        {
+          "kind": "refine",
+          "seed": 101,
+          "phase": "control",
+          "status": "completed",
+          "converged": true,
+          "efficiency_F480": 0.8
+        },
+        {
+          "kind": "refine",
+          "seed": 102,
+          "phase": "control",
+          "status": "completed",
+          "converged": true,
+          "efficiency_F480": 0.8
+        },
+        {
+          "kind": "refine",
+          "seed": 103,
+          "phase": "control",
+          "status": "completed",
+          "converged": true,
+          "efficiency_F480": 0.8
+        },
+        {
+          "kind": "refine",
+          "seed": 104,
+          "phase": "control",
+          "status": "completed",
+          "converged": true,
+          "efficiency_F480": 0.8
+        },
+        {
+          "kind": "train",
+          "profile": "C",
+          "seed": 100,
+          "phase": "confirmation",
+          "status": "completed",
+          "converged": true,
+          "efficiency_F480": 0.83
+        },
+        {
+          "kind": "train",
+          "profile": "C",
+          "seed": 101,
+          "phase": "confirmation",
+          "status": "completed",
+          "converged": true,
+          "efficiency_F480": 0.83
+        },
+        {
+          "kind": "train",
+          "profile": "C",
+          "seed": 102,
+          "phase": "confirmation",
+          "status": "completed",
+          "converged": true,
+          "efficiency_F480": 0.83
+        },
+        {
+          "kind": "train",
+          "profile": "C",
+          "seed": 103,
+          "phase": "confirmation",
+          "status": "completed",
+          "converged": true,
+          "efficiency_F480": 0.81
+        },
+        {
+          "kind": "train",
+          "profile": "C",
+          "seed": 104,
+          "phase": "confirmation",
+          "status": "completed",
+          "converged": true,
+          "efficiency_F480": 0.81
+        }
+      ],
+      "selected": "C",
+      "references": [
+        {
+          "method": "paper",
+          "converged": false,
+          "efficiency_F480": 0.95
+        },
+        {
+          "method": "refine",
+          "converged": true,
+          "efficiency_F480": 0.82
+        }
+      ],
+      "expected": {
+        "verdict": "inconclusive_execution",
+        "selected_profile": "C",
+        "complete": false,
+        "hc_best": 0.82,
+        "required_gain": 0.005,
+        "winning_seeds": [
+          100,
+          101,
+          102
+        ],
+        "complete_rl_seeds": [
+          100,
+          101,
+          102,
+          103,
+          104
+        ],
+        "complete_hc_runs": 10,
+        "scope": "Only this condition, these DQN variants, MEENT physics, and the bounded effort."
+      }
+    },
+    {
+      "name": "no_selection",
+      "rows": [
+        {
+          "kind": "hc",
+          "seed": 100,
+          "phase": "control",
+          "status": "completed",
+          "converged": true,
+          "efficiency_F480": 0.8
+        },
+        {
+          "kind": "hc",
+          "seed": 101,
+          "phase": "control",
+          "status": "completed",
+          "converged": true,
+          "efficiency_F480": 0.8
+        },
+        {
+          "kind": "hc",
+          "seed": 102,
+          "phase": "control",
+          "status": "completed",
+          "converged": true,
+          "efficiency_F480": 0.8
+        },
+        {
+          "kind": "hc",
+          "seed": 103,
+          "phase": "control",
+          "status": "completed",
+          "converged": true,
+          "efficiency_F480": 0.8
+        },
+        {
+          "kind": "hc",
+          "seed": 104,
+          "phase": "control",
+          "status": "completed",
+          "converged": true,
+          "efficiency_F480": 0.8
+        },
+        {
+          "kind": "refine",
+          "seed": 100,
+          "phase": "control",
+          "status": "completed",
+          "converged": true,
+          "efficiency_F480": 0.8
+        },
+        {
+          "kind": "refine",
+          "seed": 101,
+          "phase": "control",
+          "status": "completed",
+          "converged": true,
+          "efficiency_F480": 0.8
+        },
+        {
+          "kind": "refine",
+          "seed": 102,
+          "phase": "control",
+          "status": "completed",
+          "converged": true,
+          "efficiency_F480": 0.8
+        },
+        {
+          "kind": "refine",
+          "seed": 103,
+          "phase": "control",
+          "status": "completed",
+          "converged": true,
+          "efficiency_F480": 0.8
+        },
+        {
+          "kind": "refine",
+          "seed": 104,
+          "phase": "control",
+          "status": "completed",
+          "converged": true,
+          "efficiency_F480": 0.8
+        },
+        {
+          "kind": "train",
+          "profile": "C",
+          "seed": 100,
+          "phase": "confirmation",
+          "status": "completed",
+          "converged": true,
+          "efficiency_F480": 0.83
+        },
+        {
+          "kind": "train",
+          "profile": "C",
+          "seed": 101,
+          "phase": "confirmation",
+          "status": "completed",
+          "converged": true,
+          "efficiency_F480": 0.83
+        },
+        {
+          "kind": "train",
+          "profile": "C",
+          "seed": 102,
+          "phase": "confirmation",
+          "status": "completed",
+          "converged": true,
+          "efficiency_F480": 0.83
+        },
+        {
+          "kind": "train",
+          "profile": "C",
+          "seed": 103,
+          "phase": "confirmation",
+          "status": "completed",
+          "converged": true,
+          "efficiency_F480": 0.81
+        },
+        {
+          "kind": "train",
+          "profile": "C",
+          "seed": 104,
+          "phase": "confirmation",
+          "status": "completed",
+          "converged": true,
+          "efficiency_F480": 0.81
+        }
+      ],
+      "selected": null,
+      "references": [
+        {
+          "method": "paper",
+          "converged": true,
+          "efficiency_F480": 0.95
+        },
+        {
+          "method": "refine",
+          "converged": true,
+          "efficiency_F480": 0.82
+        }
+      ],
+      "expected": {
+        "verdict": "inconclusive_execution",
+        "selected_profile": null,
+        "complete": false,
+        "hc_best": 0.82,
+        "required_gain": 0.005,
+        "winning_seeds": [],
+        "complete_rl_seeds": [],
+        "complete_hc_runs": 10,
+        "scope": "Only this condition, these DQN variants, MEENT physics, and the bounded effort."
+      }
+    },
+    {
+      "name": "strict_gain_boundary",
+      "rows": [
+        {
+          "kind": "hc",
+          "seed": 100,
+          "phase": "control",
+          "status": "completed",
+          "converged": true,
+          "efficiency_F480": 0.8
+        },
+        {
+          "kind": "hc",
+          "seed": 101,
+          "phase": "control",
+          "status": "completed",
+          "converged": true,
+          "efficiency_F480": 0.8
+        },
+        {
+          "kind": "hc",
+          "seed": 102,
+          "phase": "control",
+          "status": "completed",
+          "converged": true,
+          "efficiency_F480": 0.8
+        },
+        {
+          "kind": "hc",
+          "seed": 103,
+          "phase": "control",
+          "status": "completed",
+          "converged": true,
+          "efficiency_F480": 0.8
+        },
+        {
+          "kind": "hc",
+          "seed": 104,
+          "phase": "control",
+          "status": "completed",
+          "converged": true,
+          "efficiency_F480": 0.8
+        },
+        {
+          "kind": "refine",
+          "seed": 100,
+          "phase": "control",
+          "status": "completed",
+          "converged": true,
+          "efficiency_F480": 0.8
+        },
+        {
+          "kind": "refine",
+          "seed": 101,
+          "phase": "control",
+          "status": "completed",
+          "converged": true,
+          "efficiency_F480": 0.8
+        },
+        {
+          "kind": "refine",
+          "seed": 102,
+          "phase": "control",
+          "status": "completed",
+          "converged": true,
+          "efficiency_F480": 0.8
+        },
+        {
+          "kind": "refine",
+          "seed": 103,
+          "phase": "control",
+          "status": "completed",
+          "converged": true,
+          "efficiency_F480": 0.8
+        },
+        {
+          "kind": "refine",
+          "seed": 104,
+          "phase": "control",
+          "status": "completed",
+          "converged": true,
+          "efficiency_F480": 0.8
+        },
+        {
+          "kind": "train",
+          "profile": "C",
+          "seed": 100,
+          "phase": "confirmation",
+          "status": "completed",
+          "converged": true,
+          "efficiency_F480": 0.825
+        },
+        {
+          "kind": "train",
+          "profile": "C",
+          "seed": 101,
+          "phase": "confirmation",
+          "status": "completed",
+          "converged": true,
+          "efficiency_F480": 0.825
+        },
+        {
+          "kind": "train",
+          "profile": "C",
+          "seed": 102,
+          "phase": "confirmation",
+          "status": "completed",
+          "converged": true,
+          "efficiency_F480": 0.825
+        },
+        {
+          "kind": "train",
+          "profile": "C",
+          "seed": 103,
+          "phase": "confirmation",
+          "status": "completed",
+          "converged": true,
+          "efficiency_F480": 0.825
+        },
+        {
+          "kind": "train",
+          "profile": "C",
+          "seed": 104,
+          "phase": "confirmation",
+          "status": "completed",
+          "converged": true,
+          "efficiency_F480": 0.825
+        }
+      ],
+      "selected": "C",
+      "references": [
+        {
+          "method": "paper",
+          "converged": true,
+          "efficiency_F480": 0.95
+        },
+        {
+          "method": "refine",
+          "converged": true,
+          "efficiency_F480": 0.82
+        }
+      ],
+      "expected": {
+        "verdict": "no_demonstrated_reproducible_advantage",
+        "selected_profile": "C",
+        "complete": true,
+        "hc_best": 0.82,
+        "required_gain": 0.005,
+        "winning_seeds": [],
+        "complete_rl_seeds": [
+          100,
+          101,
+          102,
+          103,
+          104
+        ],
+        "complete_hc_runs": 10,
+        "scope": "Only this condition, these DQN variants, MEENT physics, and the bounded effort."
+      }
+    }
+  ]
+}

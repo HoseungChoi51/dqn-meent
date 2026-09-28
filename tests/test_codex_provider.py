@@ -70,10 +70,12 @@ def test_isolation_flags_environment_schema_and_prompt(tmp_path, monkeypatch):
     assert "must-not-leak" not in json.dumps(observed)
     assert observed["prompt"] == "Visible development evidence"
     assert "Role-specific instructions" in observed["instructions"]
+    assert "You MAY request the application's declared tools" in observed["instructions"]
+    assert "Do not directly use Codex CLI tools" in observed["instructions"]
     assert observed["schema"]["additionalProperties"] is False
     assert observed["options"]["forced_login_method"] == '"chatgpt"'
     assert observed["options"]["model_provider"] == '"openai"'
-    assert observed["options"]["openai_base_url"] == '"https://api.openai.com/v1"'
+    assert "openai_base_url" not in observed["options"], "ChatGPT auth must use Codex's subscription endpoint"
     assert observed["options"]["web_search"] == '"disabled"'
     assert observed["options"]["default_permissions"] == '"grating_research"'
     assert observed["options"]["permissions.grating_research.network.enabled"] == "false"

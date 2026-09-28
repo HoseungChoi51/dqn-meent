@@ -1,5 +1,8 @@
 # Grating Lab workspace guide
 
+For recorded training, baselines, inference, evaluation and generic commands,
+see the [CLI research guide](cli-research.md).
+
 Grating Lab helps a researcher choose useful experiments and improve optimization strategies. The system keeps persuasive rationale, measured outcomes, and research decisions distinct. It does not automatically declare an algorithm the winner of an irreversible tournament.
 
 ## Install and start
@@ -7,12 +10,12 @@ Grating Lab helps a researcher choose useful experiments and improve optimizatio
 The local pilot uses Linux, Python 3.12 or 3.13, `uv`, and Node.js/npm. Run from the repository root:
 
 ```bash
-uv sync --frozen --extra dev
+uv sync --frozen --all-extras
 cd frontend
 npm ci
 npm run build
 cd ..
-uv run grating-lab --directory runs/workspace --workers 2 --port 8765
+uv run --no-sync grating-lab --directory runs/workspace --workers 2 --port 8765
 ```
 
 Open **http://127.0.0.1:8765**. `--workers` controls concurrent numerical trial processes, not web server processes. Use one service instance per workspace; a file lock prevents two schedulers from owning the same records. The default listener is local (`127.0.0.1`). This pilot does not provide authentication or a multi-user security boundary for a public deployment.
@@ -23,13 +26,18 @@ CPU execution is supported. PyTorch's Linux package may download CUDA dependenci
 
 ## Configure the research models
 
-The default provider is **Codex**, with **`gpt-6-sol` for every research role**. Model execution is **disabled by default** so you can configure it later. Starting the workspace does not launch Codex or read `.key`. The dashboard reports that configuration is deferred, while numerical experiments, strategy records, and the notebook remain available. Research requests in this state use clearly labeled curated guidance; fixed text is never presented as new model research.
+For the current review deployment, use the [server control script](server-control.md)
+to start or stop both services and their private Tailnet route with one command.
+Its explicit configuration enables Codex for both services; `--no-llm` disables
+model calls for an inspection session.
+
+The default provider is **Codex**, with **`gpt-6-sol` for every research role**. Model execution is **disabled by default** so you can configure it later. Starting a disabled workspace does not launch Codex or read `.key`. Numerical experiments, strategy records, and the notebook remain available. Research requests stay in the durable campaign inbox until model access is configured. One manager issue explains the blocker; enabling a provider lets the serialized queue continue with current guidance.
 
 The Python supervisor uses a small adapter to run Codex noninteractively for bounded, structured research calls. It does not require this conversation or an interactive Codex session to remain open. Configure the local Codex installation with subscription authentication when you are ready, then start or restart the workspace with:
 
 ```bash
 GRATING_LLM_PROVIDER=codex GRATING_LLM_MODEL=gpt-6-sol GRATING_LLM_ENABLED=true \
-  uv run grating-lab --directory runs/workspace --workers 2 --port 8765
+  uv run --no-sync grating-lab --directory runs/workspace --workers 2 --port 8765
 ```
 
 These are instructions for later setup; installation, login, and model calls are not performed automatically. If the provider is unavailable or its quota is exhausted, the affected research run stops with an inspectable error. The application does not silently change models, switch to the API, or spend the existing `.key` balance.
@@ -41,7 +49,7 @@ Codex calls consume the authenticated account's subscription allowance. They hav
 | `GRATING_LLM_PROVIDER` | Default `codex`. `openai_api` and `compatible` explicitly select API transports. |
 | `GRATING_LLM_MODEL` | Default `gpt-6-sol` for Codex; all research roles use this model. |
 | `GRATING_LLM_ENABLED=true` | Opt in to model execution after configuring the selected provider. Default is disabled. |
-| `GRATING_LLM_DISABLED=true` | Force curated mode, overriding `GRATING_LLM_ENABLED`. |
+| `GRATING_LLM_DISABLED=true` | Disable model calls and retain queued research requests, overriding `GRATING_LLM_ENABLED`. |
 | `GRATING_CODEX_BINARY` | Codex executable name or path; defaults to `codex`. |
 | `GRATING_CODEX_TIMEOUT_SECONDS` | Codex call timeout; defaults to 120 seconds, clamped to 5–600 seconds. |
 | `GRATING_LLM_REASONING_EFFORT` | Default `low`; applied by the selected adapter when supported. |
@@ -90,7 +98,7 @@ A revised idea shows **What changed**, the agents' response to your feedback, an
 
 Revision and critique require a configured model. Comments can still be saved while setup is deferred or a discussion is running. If the comment is saved but the revision request fails, the comment remains available for retry. Revive archived ideas before revising them. Neither targeted critique nor targeted revision automatically launches numerical experiments, including in delegated mode; proposed experiments remain available for a separate decision.
 
-This implements an individual idea's feedback loop. Batch keep/reject decisions, broader kill/revival scopes, and the persistent knowledge library remain planned extensions.
+This implements an individual idea's feedback loop. Batch keep/reject decisions, broader kill/revival scopes, and a general scientific knowledge library remain planned extensions. Campaign memory and the executable implementation library are available separately.
 
 ## Experiments and controls
 
@@ -140,34 +148,27 @@ Open **Research notebook → Source library** to search arXiv/Crossref or retrie
 
 Search providers are `arxiv` and `crossref`. Ingestion recognizes DOI/arXiv identifiers, the supplied Nature article URL, and citation metadata on a small primary-source allowlist. Retrieval has size/time/result limits and does not follow arbitrary redirects. A successful metadata fetch verifies bibliographic content and available abstracts; it does not establish the paper's claims or applicability. Unavailable sources remain explicit failures.
 
-Custom strategies use `algorithm: "custom"` with Python source on a hypothesis. Select **Custom Python strategy** when contributing or forking an idea, paste the source, then open its dossier and choose **Verify implementation**. The equivalent API is `POST /api/hypotheses/{id}/verify` with `{"n_cells":8,"seed":0}`. Verification checks protocol behavior and reproducibility against a synthetic observation; it is not performance evidence. Source changes require a new hypothesis/version and new verification.
+New strategies use the independent [implementation service](implementation-service.md). An idea can have **Implementation missing**, **Implementation validation required**, a job state, or **Implementation available**. The backend resolves this state; the UI displays its reason beside the experiment control. **Request implementation** opens a commissioning form with a frozen mechanism, acceptance criteria, exact dependencies, supported parameters, and a bounded allocation. **Implementations** lets you reuse a specific published version across campaigns and local workspaces.
 
-The custom optimizer protocol is Python standard library only:
+The package interface is `create_optimizer(context)` returning an object with `ask()`, `tell(design, efficiency)`, `checkpoint() -> bytes`, and `restore(bytes)`. A persistent isolated Python process can use declared, locked numerical libraries. Only the trusted parent evaluates proposed designs. The service freezes protected behavior checks before building, performs reproducibility and checkpoint checks plus four real MEENT evaluations, obtains an independent semantic review, and permits at most three candidate attempts inside the fixed grant. These checks concern implementation correctness; comparative performance remains workbench evidence.
 
-```python
-def initialize(n_cells, seed, config):
-    # Return all persistent state as finite JSON values.
-    return {"n": n_cells, "rng": seed, "best": None}
+Old `algorithm: "custom"` source and protocol-verification records remain historical records. Old workers and their pinned continuations remain usable. New launches require package validation. The compatibility `POST /api/hypotheses/{id}/verify` endpoint now returns an asynchronous job and needs `compute_seconds`, `api_budget_usd`, and `idempotency_key`; it imports the existing source through an adapter. A protocol-only pass is never promoted into a stronger validation claim.
 
-def propose(state):
-    # This small example only illustrates deterministic protocol mechanics.
-    bits = []
-    for _ in range(state["n"]):
-        state["rng"] = (1664525 * state["rng"] + 1013904223) % (2**32)
-        bits.append((state["rng"] >> 31) & 1)
-    return {"design": bits, "state": state}
+The current evaluator exposes `binary_forward`. Continuous designs, RCWA gradients, and new objectives require a separate evaluator extension. Unsupported capabilities create a campaign manager issue, rather than a pretend successful implementation.
 
-def observe(state, design, efficiency):
-    if state["best"] is None or efficiency > state["best"]["efficiency"]:
-        state["best"] = {"design": design, "efficiency": efficiency}
-    return state
-```
+## Campaign manager and durable context
 
-Each function call starts a fresh isolated process. Module globals and in-memory RNG objects do not persist; return RNG state explicitly. `propose` must return exactly `design` and `state`, with one binary value per cell. The trusted parent evaluates the design and calls `observe`; candidate code cannot replace scores or access the evaluator ledger.
+The campaign manager is the interface for unexpected failures, unresolved capabilities, stale actions, and implementation questions. Ordinary launch, pause, stop, extend, and charter controls remain directly available. Manager messages queue durably while another turn runs. A new researcher direction makes outstanding recommendations stale; older turns cannot silently dispatch their actions against newer guidance.
 
-Execution requires Linux **bubblewrap**, `/usr/bin/python3`, and permitted unprivileged user namespaces. The runtime includes the Python standard library and its system dependencies, with no project tree, host credentials, network, or locked test data. Default request timeout is 2 seconds, source limit is 64 KiB, and JSON state limit is 1 MiB. If namespace isolation is unavailable, custom execution fails closed; there is no in-process fallback.
+**Campaign memory** presents the current structured Markdown context, editable researcher guidance, source references, and revision history. Restoring old guidance creates a new revision. Concurrent edits report a conflict. Authoritative budgets and physics still change through the charter; model interpretations and measured records remain separate.
 
-This is an open mechanism for full sequential discrete search, not a fixed menu of built-in algorithms. Its standard-library-only runtime does not supply NumPy, PyTorch, or differentiable MEENT. A differentiable strategy therefore needs a separately reviewed evaluator/optimizer extension and finite-difference checks before scientific use.
+SQLite owns the context revisions, typed findings/decisions, command inbox, issues, and event journal. Projections live at `campaigns/<id>/manager/context.md`, `context.json`, `revisions/`, `records.jsonl`, `records/`, and `journal.jsonl`. The service reconstructs model context from these durable records each turn and retains the exact snapshot it used. Relevant older records are retrieved through SQLite full-text search. The manager memory package is bounded to 96 KiB; large histories use recent and retrieved evidence, while overflowing active constraints produces a visible issue rather than silently dropping them. Locked observations and records derived from them are excluded from development reasoning.
+
+Use `context.import` to submit an edited JSON context with its original revision. Only `narrative_guidance` is writable through that document; authority, evidence and work use their owning commands. Published findings require a problem scope, evidence and limitations. Observations, provisional interpretations, researcher endorsements and counterevidence remain distinguishable. Another campaign reads a published finding only after an explicit manager-evidence reference decision.
+
+Each relevant completion has a durable inbox identity and consumption position. Model output is saved before its messages and proposed actions commit. Accepted commands reconcile before delivery is retried; stale unissued proposals are reconsidered against current guidance. Pending issues block affected actions, while independent authorized work can continue.
+
+Implementation compute has its own charter allocation (zero by default for existing campaigns). Implementation and research API usage share the campaign API spending cap. Subscription calls retain separate accounting. Interrupted provider calls cannot replay automatically, and their uncertain usage is retained for an explicit manager decision.
 
 ## Persistence, verification, and current limits
 
@@ -178,7 +179,7 @@ Research roles record a durable reservation before contacting the provider and c
 Run verification with:
 
 ```bash
-uv run pytest -q
+uv run --no-sync pytest -q
 cd frontend
 npm run build
 npm run test:e2e
@@ -189,9 +190,9 @@ Browser tests use `/usr/bin/google-chrome` when available, or `CHROME_PATH`, oth
 To run the real API/browser scenario, start a separate disposable workspace with model calls disabled on an available port 8765:
 
 ```bash
-GRATING_LLM_DISABLED=true uv run grating-lab --directory /tmp/grating-lab-browser-check --workers 2 --port 8765
+GRATING_LLM_DISABLED=true uv run --no-sync grating-lab --directory /tmp/grating-lab-browser-check --workers 2 --port 8765
 ```
 
 Then run `npm run test:live` from `frontend/`. This creates an actual campaign, performs small MEENT baseline and validation jobs, and exercises the comparison/history/export surfaces. It uses the running backend rather than mocked API data. Both browser scopes and the production build were exercised during implementation; see the evidence map for the exact coverage and remaining audit items.
 
-See [implementation status](implementation-status.md) for the evidence map and remaining validation. Exposure tracking is local to the campaign: it cannot certify what a researcher already knew from other projects or papers. No full campaign comparing researcher-alone, researcher-plus-agents, and system-only performance has been conducted as part of implementing this software. No state-of-the-art algorithm or device claim follows from these software tests.
+See [implementation status](implementation-status.md) for the evidence map and remaining validation. Known development and validation exposure follows reused implementation versions across local workspaces. This cannot certify what a researcher already knew from other projects or papers. No full campaign comparing researcher-alone, researcher-plus-agents, and system-only performance has been conducted as part of implementing this software. No state-of-the-art algorithm or device claim follows from these software tests.

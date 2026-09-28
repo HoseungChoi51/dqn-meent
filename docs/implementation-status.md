@@ -2,6 +2,24 @@
 
 This map follows the eight sections of the [revised plan](agentic-algorithm-discovery-plan.md). It distinguishes implemented capabilities, the scope of their tests, and scientific or operational claims that still require evidence. Presence of a test is not recorded here as proof that it passed on every host.
 
+The newer two-repository consolidation is governed by the
+[consolidation plan](architecture-consolidation-plan.md), with checkpoint evidence
+in [consolidation progress](consolidation-progress.md) and the remaining mutations
+in the [command inventory](application-command-inventory.md). The dated entries
+below describe earlier implementations; they do not establish completion of the
+integrated product or its durable manager lifecycle. The live installation remains
+on its earlier source while new controls are qualified in isolated workspaces.
+
+## Implementation library and campaign manager update: 2026-09-24
+
+The [implementation service](implementation-service.md) now owns bounded build/repair jobs, protected behavior checks, independent semantic review, exact dependency runtimes, immutable package versions, and shared local reuse. The workbench displays backend readiness with reasons, consumes pinned versions, and keeps correctness validation separate from measured performance. Built-ins retain bundled regression coverage; historical custom-source protocol checks are not upgraded into new validation claims.
+
+The campaign manager has a durable serialized inbox, deduplicated exception issues, versioned editable Markdown guidance, typed findings/decisions, provenance, and full-text retrieval. Context survives restarts and histories longer than the conversation window. Locked observations and derived records are excluded. Researcher guidance changes invalidate stale actions. Implementation compute is separately allocated; API spend remains shared and subscription calls remain distinct.
+
+Verification: the full suite passed **193 Python tests**; a further protected test-planning workflow test also passed (**194 total**). **18 mocked browser tests**, the production frontend build, and **one real browser/API/MEENT workflow** passed. A read-only check of the deployed current campaign also verified all three missing implementation states, the request action, memory editor, and library view with no browser errors. Follow-up accounting and dependency-identity checks passed **58 focused tests**. The live Codex `gpt-6-sol` reference build passed protected checks and independent review in **two subscription calls**, with **zero paid API spend**, **12,831 input tokens**, **1,141 output tokens**, and **32.3 seconds** of implementation time. Its validation includes four actual MEENT evaluations. The acceptance artifact is local at `runs/acceptance/implementation-service-20260924/acceptance.json`. This proves bounded transport and the implementation workflow for a small reference algorithm, not the three unimplemented research proposals or their performance.
+
+The additive migration was dry-run and then applied to the current campaign after a SQLite backup at `runs/backups/workspace-before-manager-20260924.sqlite3`. The exact historical-record digest was preserved. The updated workspace and independent implementation service are running locally on ports 8765 and 8766, and their authenticated connection was verified. Fourier and portfolio remain unimplemented; relaxed gradients additionally require evaluator extensions. The broader scientific knowledge library and researcher-outcome studies below remain separate work.
+
 ## Newly planned extensions: 2026-09-23
 
 The broader feature request initially updated the plan only. A subsequent live-testing request implements the individual idea feedback loop described below; the remaining extensions are still planned.
@@ -12,7 +30,7 @@ The broader feature request initially updated the plan only. A subsequent live-t
 | Learn from individual and comparative finalist evaluations | Numerical comparisons, validation artifacts, and research summaries | Method–problem assessments, measured problem-characteristic profiles, competing explanations and diagnostic proposals, discussion drafts, and reviewed promotion of conditional findings |
 | Reuse learned knowledge and repeated background sources | Campaign source records and source material supplied to research calls | Canonical source/version management, claim-level notes and findings, retrieval before search, contradiction/correction propagation, and linked-workspace collections with inherited confirmation exposure |
 
-Internet publication, automatic sharing, and community synchronization remain deferred. Current exposure controls are campaign-scoped; the plan's propagation across linked workspaces requires new implementation. The [plan's delivery increments](agentic-algorithm-discovery-plan.md#8-implementation-increments-and-acceptance-criteria) define acceptance checks for these additions.
+Internet publication, automatic sharing, and community synchronization remain deferred. General scientific knowledge sharing remains planned; known implementation development and validation exposure now follows reused package versions across local workspaces. The [plan's delivery increments](agentic-algorithm-discovery-plan.md#8-implementation-increments-and-acceptance-criteria) define acceptance checks for these additions.
 
 ## Individual idea feedback update
 
@@ -94,7 +112,7 @@ Test paths below are relative to the repository root; `workspace/` abbreviates `
 
 - The scientific evaluator currently optimizes separate binary gratings for single target configurations. Arbitrary new objectives and gradients require implementation, not only a charter edit.
 - Differentiable proposals have rationale cards, but the trusted worker exposes forward binary evaluation. Finite-difference gradient verification remains necessary before such an extension is usable.
-- Custom source is standard-library Python in a bounded isolated protocol. It can implement new sequential search mechanisms; it does not receive the full project's numerical dependencies.
+- Legacy custom source uses the historical standard-library protocol. New package implementations can use exact locked numerical dependencies in an isolated runtime; unsupported evaluator capabilities still require an extension.
 - Bootstrap intervals describe the supplied observations. Small, adaptively selected development samples do not establish broad generalization or state-of-the-art performance.
 - Confirmation cohorts and frozen protocols prevent several software-level leakage paths. They cannot certify that the researcher has never seen related conditions externally, or make adaptively chosen test sets representative.
 - Training settings and allocations freeze at each finalist's first confirmation launch. Cohort membership alone does not preregister those settings for all finalists, a complete test family, or fresh seed assignments. Comparisons therefore retain exploratory labels; a formal study must declare its joint protocol before inspecting confirmation outcomes.
