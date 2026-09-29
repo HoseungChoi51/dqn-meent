@@ -33,6 +33,12 @@ returning {'diagonal':[float,...],'low_rank':[[float,...],...]}, with low_rank
 stored as rows of a matrix with at most rank columns. This hook exercises the
 same decoder and covariance refactor used by the optimizer; it must not advance
 the search, use the evaluator, or return a self-reported pass/fail answer.
+For H12 cache checks, cache_identity receives {'mask':32768 x-major binary bits,
+'context':JSON evaluator context} and returns {'key':64 lowercase hexadecimal
+SHA256 identity} computed by the same cache-key function as search. The service
+tests identity stability and separation across mask, fidelity and evaluator
+version changes. The optimizer must reject mismatched physical observations or
+separate their cache contexts; it must never silently reuse a different context.
 If execution_capabilities declares optimizer_decisions, inspect() must return a nonnegative monotonic
 integer 'decisions' counter consistent with the specified procedure. For each declared export, return
 one object with kind, format, metadata and JSON-serializable data. Exporting must not advance the search
@@ -339,7 +345,7 @@ class ImplementationService:
                         rationale="Commissioned acceptance checks", blocker=None)
                 else:
                     plan = model_call("implementation_test_designer", {"spec": request.spec.model_dump()},
-                        result_type=ValidationPlan, instructions="Design protected, inexpensive black-box checks of this declared algorithm before seeing any candidate code. Choose supported assertions; use exact_designs for a hand-calculated deterministic reference. Use mechanism_checks on optimizer_v1 inspect() JSON pointers for necessary normalization, tangent-space, PSD and rank invariants. For H12 choose h12_fourier_decoder, h12_covariance_refactor and h12_replay_context diagnostic checks; these use service-owned programmatic fixtures, not literal 32768-bit masks. Do not assert performance superiority. If the mechanism is underspecified or cannot be checked with this contract, return a concrete blocker. At least one behavior or diagnostic check is required.")
+                        result_type=ValidationPlan, instructions="Design protected, inexpensive black-box checks of this declared algorithm before seeing any candidate code. Choose supported assertions; use exact_designs for a hand-calculated deterministic reference. Use mechanism_checks on optimizer_v1 inspect() JSON pointers for necessary normalization, tangent-space, PSD and rank invariants. For H12 choose h12_fourier_decoder, h12_covariance_refactor, h12_replay_context and h12_cache_identity diagnostic checks; these use service-owned programmatic fixtures, not literal 32768-bit masks. Do not assert performance superiority. If the mechanism is underspecified or cannot be checked with this contract, return a concrete blocker. At least one behavior or diagnostic check is required.")
                     self.update_job(job_id, usage=adapter.usage)
                 if plan.blocker or not (plan.checks or plan.diagnostic_checks):
                     raise CapabilityUnavailable(plan.blocker or "A specification-specific validation check is required")

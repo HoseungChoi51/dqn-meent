@@ -552,9 +552,18 @@ class PackageOptimizer(PackageProcess):
         if self.contract == "optimizer_v1":
             from optimization_framework.contracts.problems import Objective, Observation
             objective = Objective(**self.context["problem"]["primary_objective"])
+            evaluation = self.context["parameters"].get("evaluation_context") or {}
+            identity = digest({"instance": self.context["problem"]["scientific_identity"],
+                               "fidelity": evaluation["fidelity"],
+                               "evaluator": [evaluation["evaluator_id"], evaluation["evaluator_version"]]}) if all(
+                                   key in evaluation for key in ("fidelity", "evaluator_id", "evaluator_version")) else "protected_fixture"
+            score = objective.utility(efficiency)
+            objectives = {objective.name: score}
+            for metric in self.context["problem"].get("extra_metrics", []):
+                objectives[metric["name"]] = score
             self.observe([Observation(id=f"fixture_{self.count}", experiment_id="correctness_fixture", attempt_id="correctness_fixture",
                 request_id=f"fixture_{self.count}", proposal_id=self.pending[0].id, candidate=candidate,
-                status="ok", objectives={objective.name: objective.utility(efficiency)}, evaluator_identity="protected_fixture")])
+                status="ok", objectives=objectives, fidelity=evaluation.get("fidelity", {}), evaluator_identity=identity)])
             return
         self._request("tell", design=candidate, efficiency=float(efficiency))
         self.count += 1

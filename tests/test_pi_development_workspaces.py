@@ -150,9 +150,16 @@ def test_questions_submissions_and_independent_validation_grant(setup, monkeypat
     monkeypatch.setattr('optimization_framework.agents.capabilities.implementation_execution',
                         lambda: {'available': True})
     # The implementation module imports the capability function at invocation time.
-    result = development.validate(cid, record['id'], {'submission_id': submission['id'],
+    frozen = development.freeze_envelope(cid, record['id'], {'request_key': 'freeze',
         'spec': {'name': 'Test method', 'mechanism': 'Seeded search',
-                 'acceptance_criteria': ['Seeded replay'], 'dependencies': {}},
+                 'acceptance_criteria': ['Seeded replay'], 'dependencies': {}}})
+    assert frozen['checks'] == {'behavior': 0, 'mechanism': 0, 'diagnostic': 0}
+    assert development.freeze_envelope(cid, record['id'], {'request_key': 'freeze',
+        'spec': {'name': 'Test method', 'mechanism': 'Seeded search',
+                 'acceptance_criteria': ['Seeded replay'], 'dependencies': {}}})['id'] == frozen['id']
+    assert 'spec' not in development.public(development.get(cid, record['id']))['validation_envelopes'][0]
+    result = development.validate(cid, record['id'], {'submission_id': submission['id'],
+        'envelope_id': frozen['id'],
         'compute_seconds': 20, 'request_key': 'validate'})
     assert result['grant_id'] == 'grant_dev'
     assert captured['accounting_mode'] == 'execution_v1'

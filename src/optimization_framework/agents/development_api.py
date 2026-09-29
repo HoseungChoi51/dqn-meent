@@ -10,7 +10,7 @@ import httpx
 from fastapi import HTTPException, Request, WebSocket
 from fastapi.responses import StreamingResponse
 
-from .development import WorkspaceCreate, WorkspaceMessage, WorkspaceControl, WorkspaceValidate
+from .development import WorkspaceCreate, WorkspaceMessage, WorkspaceControl, WorkspaceValidate, WorkspaceEnvelope
 
 
 def install(app, workspace):
@@ -42,6 +42,10 @@ def install(app, workspace):
     @app.post("/api/campaigns/{campaign_id}/implementation-workspaces/{identity}/validations")
     def validate(campaign_id: str, identity: str, body: WorkspaceValidate):
         return development.validate(campaign_id, identity, body.model_dump())
+
+    @app.post("/api/campaigns/{campaign_id}/implementation-workspaces/{identity}/envelopes")
+    def freeze_envelope(campaign_id: str, identity: str, body: WorkspaceEnvelope):
+        return development.freeze_envelope(campaign_id, identity, body.model_dump())
 
     def port(identity):
         record = workspace.store.get(identity, "development_workspace")

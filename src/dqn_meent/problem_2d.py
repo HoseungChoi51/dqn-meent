@@ -137,7 +137,11 @@ class Meent2DProblem:
     def implementation_fixture(self, configuration: dict, dimensions: int) -> ProblemInstance:
         if configuration["grid_x"] * configuration["grid_y"] != dimensions:
             raise ValueError("Optimizer dimension differs from the 2D design grid")
-        return self.resolve(configuration, {"rcwa_order_x": 1, "rcwa_order_y": 1})
+        # A commission can pin a physical fidelity in its legacy configuration.
+        # Preserve that choice; use the inexpensive smoke fidelity only when no
+        # explicit RCWA orders were supplied.
+        embedded = {key: configuration[key] for key in FIDELITY_SCHEMA["required"] if key in configuration}
+        return self.resolve(configuration, embedded or {"rcwa_order_x": 1, "rcwa_order_y": 1})
 
 
 class Meent2DEvaluator:

@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import hashlib
 import math
+import re
 
 import numpy as np
 
@@ -108,15 +109,55 @@ def covariance_refactor(optimizer):
             "degenerate_replay": True}
 
 
+def cache_identity(optimizer):
+    """The exact cache key must bind mask bytes and all evaluator context."""
+    mask = np.zeros(SHAPE, dtype=np.uint8)
+    mask[:81, :33] = 1
+    mask = mask.ravel().tolist()
+    context = {"scientific_identity": "fixture-physics-a", "evaluator_version": "fixture-solver-a",
+               "fidelity": {"rcwa_order_x": 10, "rcwa_order_y": 5}, "objective": "mean_TE_TM"}
+
+    def key(bits, settings):
+        value = optimizer.diagnostic("cache_identity", {"mask": bits, "context": settings})
+        result = value.get("key") if isinstance(value, dict) else None
+        if not isinstance(result, str) or not re.fullmatch(r"[0-9a-f]{64}", result):
+            raise ValueError("Cache diagnostic must return a SHA256 identity")
+        return result
+
+    first = key(mask, context)
+    if key(mask, context) != first:
+        raise ValueError("Identical mask and evaluator context changed cache identity")
+    changed_mask = mask.copy()
+    changed_mask[123] ^= 1
+    if key(changed_mask, context) == first:
+        raise ValueError("Different physical masks collide in cache identity")
+    for field, value in (("scientific_identity", "fixture-physics-b"),
+                         ("evaluator_version", "fixture-solver-b")):
+        changed = {**context, field: value}
+        if key(mask, changed) == first:
+            raise ValueError(f"Cache identity ignores {field}")
+    changed = {**context, "fidelity": {"rcwa_order_x": 6, "rcwa_order_y": 3}}
+    if key(mask, changed) == first:
+        raise ValueError("Cache identity ignores RCWA fidelity")
+    return {"mask_cells": len(mask), "context_variations": 3, "mask_variations": 1}
+
+
 def replay_context(create):
-    """Compare live proposals across a checkpoint while varying observation identity."""
+    """Compare live proposals across a checkpoint at the frozen evaluator identity."""
     from optimization_framework.contracts.problems import Observation
+    from optimization_framework.implementations.models import digest
     n = SHAPE[0] * SHAPE[1]
     first, resumed = create(n, 731), None
     try:
         if first.contract != "optimizer_v1":
             raise ValueError("H12 replay requires optimizer_v1")
         objective = first.context["problem"]["primary_objective"]["name"]
+        evaluator = first.context["parameters"].get("evaluation_context")
+        if not isinstance(evaluator, dict) or not isinstance(evaluator.get("fidelity"), dict):
+            raise ValueError("H12 replay needs a frozen evaluation_context in optimizer parameters")
+        identity = digest({"instance": first.context["problem"]["scientific_identity"],
+                           "fidelity": evaluator["fidelity"],
+                           "evaluator": [evaluator["evaluator_id"], evaluator["evaluator_version"]]})
 
         def step(worker, index):
             proposals = worker.propose(1)
@@ -124,9 +165,10 @@ def replay_context(create):
             candidate = worker.candidate_schema.canonicalize(proposal.candidate)
             observation = Observation(id=f"fixture_{index}", experiment_id="h12_replay",
                 attempt_id="h12_replay", request_id=f"fixture_{index}", proposal_id=proposal.id,
-                candidate=candidate, status="ok", objectives={objective: .5 if index < 8 else (index % 3) / 3},
-                evaluator_identity="context_A" if index % 2 == 0 else "context_B",
-                fidelity={"orders": [10, 5]} if index % 2 == 0 else {"orders": [6, 3]})
+                candidate=candidate, status="ok",
+                objectives={name: .5 if index < 8 else (index % 3) / 3
+                            for name in (objective, "te_plus1_transmission", "tm_plus1_transmission", "min_plus1_transmission")},
+                evaluator_identity=identity, fidelity=evaluator["fidelity"])
             worker.observe([observation])
             return candidate
 
@@ -138,8 +180,8 @@ def replay_context(create):
         for index in range(8, 16):
             if step(first, index) != step(resumed, index):
                 raise ValueError("Checkpoint continuation changed the mask sequence")
-        return {"cells": n, "pre_checkpoint": 8, "replayed": 8, "contexts": 2,
-                "tie_observations": 8}
+        return {"cells": n, "pre_checkpoint": 8, "replayed": 8,
+                "tie_observations": 8, "frozen_evaluator_identity": identity}
     finally:
         first.close()
         if resumed is not None:

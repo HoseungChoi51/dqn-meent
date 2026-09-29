@@ -80,7 +80,8 @@ export function DevelopmentPanel({state, refresh}:{state:State; refresh:()=>Prom
     if(!active||busy)return;
     setBusy(true);setError('');
     try{
-      await command('agent.message',{message:`Review submission ${submission.id} (commit ${submission.commit}) in implementation workspace ${active.id}. Commission independent validation against the frozen specification and existing implementation allocation. Report findings and repair requests to the same coding session.`,mode:'steer'});
+      const envelope=active.validation_envelopes?.[0];
+      await command('agent.message',{message:`Review submission ${submission.id} (commit ${submission.commit}) in implementation workspace ${active.id}. Use frozen validation envelope ${envelope?.id || '(prepare one first)'} and only an explicitly available implementation allocation. Report findings and repair requests to the same coding session.`,mode:'steer'});
       setNotice('Validation request sent to the PI.');await refresh();
     }catch(failure){setError(errorText(failure));}finally{setBusy(false);}
   }
@@ -118,6 +119,9 @@ export function DevelopmentPanel({state, refresh}:{state:State; refresh:()=>Prom
           <p><Badge>{s.status}</Badge> {s.manifest?.test_summary}</p>
           {s.validation_outcome && <TextContent text={JSON.stringify(s.validation_outcome)} />}
           {s.status==='submitted' && <button className="button small secondary" disabled={busy} onClick={()=>void askPi(s)}>Ask PI to validate</button>}</article>)}
+        {(active.validation_envelopes || []).map((envelope:Json)=><p key={envelope.id}>
+          Frozen validation envelope <code>{envelope.id}</code> · {envelope.checks?.behavior || 0} behavior, {envelope.checks?.mechanism || 0} state, {envelope.checks?.diagnostic || 0} diagnostic checks.
+        </p>)}
         <details><summary>Agent activity · {events.length} recent events</summary><div className="pi-agent-tree" role="log" aria-label="Implementation activity">
           {events.slice(-40).map((event:Json)=><article key={event.id}><small>{when(event.occurred_at)} · {event.type}</small>
             <TextContent text={event.payload?.text || event.payload?.summary || event.payload?.output || event.payload?.error || ''} /></article>)}</div></details>

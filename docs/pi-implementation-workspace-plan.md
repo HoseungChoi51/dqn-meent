@@ -24,13 +24,25 @@ earlier blocked attempts, so no new validation grant was opened for this pilot.
 
 The protected service now exposes H12 diagnostic fixtures for programmatic
 full-mask Fourier decoding at all four modes, actual reconstructed covariance
-spectral correction including the 5.475 counterexample, and checkpoint replay
-with equal-score observations and changed evaluator contexts. A candidate
+spectral correction including the 5.475 counterexample, checkpoint replay
+with equal-score observations, and cache identity separation across evaluator
+contexts. A candidate
 implements `diagnostic(operation, payload)` on `optimizer_v1`; the service owns
 the fixture inputs and independent oracles. These checks establish scoped
 correctness, not decoder parity with the released FLRL code or optimization
 effectiveness. The coding session must submit a package and the PI must freeze
 the full scientific validation plan before a new grant is requested.
+
+The H12 pilot has submitted immutable coding revisions, including commit
+`b0399949537a193f1de85c2d471c62cedbec648f` with 26 builder-authored
+development tests. The service-owned envelope
+`development_envelope_8cc30f578f25f307dc39057b` freezes the campaign's
+actual 2D task configuration, MEENT `(10,5)` fidelity, NumPy 2.5.3 dependency,
+four saved independent behavior checks, 16 inspect-state invariants, and four
+programmatic diagnostics. The PI can refer to this ID without placing the
+16-KiB specification in its model context. The protected runtime and sandbox
+preflight pass; the envelope has not been run against the candidate because no
+new numerical implementation allocation is authorized.
 
 Use **code-server with the original Pi CLI in a persistent terminal**, connected
 to the campaign through a Pi extension. Provide desktop VS Code over SSH as an

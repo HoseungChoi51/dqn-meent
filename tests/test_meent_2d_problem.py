@@ -78,3 +78,12 @@ def test_campaign_task_survives_legacy_physics_projection():
     replayed = CampaignUpdate.model_validate(request.model_dump(mode="json", exclude_none=True,
                                                                 exclude={"rationale"}))
     assert replayed.tasks[0].problem == task.problem
+
+
+def test_implementation_fixture_honors_embedded_physical_fidelity():
+    adapter = Meent2DProblem()
+    config = {**configuration(), "rcwa_order_x": 10, "rcwa_order_y": 5}
+    fixture = adapter.implementation_fixture(config, 16 * 8)
+    assert fixture.fidelity == {"rcwa_order_x": 10, "rcwa_order_y": 5}
+    fallback = adapter.implementation_fixture(configuration(), 16 * 8)
+    assert fallback.fidelity == {"rcwa_order_x": 1, "rcwa_order_y": 1}

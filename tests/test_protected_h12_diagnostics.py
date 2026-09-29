@@ -1,10 +1,15 @@
 """The protected fixture must catch materially wrong decoder and spectral cap behavior."""
 import math
+import hashlib
+import json
 
 import numpy as np
 import pytest
 
 from optimization_framework.implementations import protected_diagnostics as diagnostics
+from optimization_framework.implementations.models import digest
+from optimization_framework.implementations.runtime import PackageOptimizer
+from optimization_framework.contracts.problems import CandidateSchema, Proposal
 
 
 class FixtureCandidate:
@@ -13,6 +18,9 @@ class FixtureCandidate:
         self.skip_cap = skip_cap
 
     def diagnostic(self, operation, payload):
+        if operation == "cache_identity":
+            encoded = json.dumps(payload, sort_keys=True, separators=(",", ":")).encode()
+            return {"key": hashlib.sha256(encoded).hexdigest()}
         if operation == "decode_fourier_mask":
             mask = diagnostics._decoder_oracle(tuple(payload["mode"]), payload["coefficients"])
             if self.bad_decoder:
@@ -44,3 +52,28 @@ def test_actual_reconstructed_spectrum_catches_unshrunk_refactor():
     assert result["post_shrink_max"] == pytest.approx(4)
     with pytest.raises(ValueError, match="Actual reconstructed covariance"):
         diagnostics.covariance_refactor(FixtureCandidate(skip_cap=True))
+
+
+def test_cache_identity_changes_with_physics_solver_fidelity_and_mask():
+    assert diagnostics.cache_identity(FixtureCandidate())["context_variations"] == 3
+
+
+def test_synthetic_adapter_uses_pinned_identity_and_declared_metrics():
+    worker = PackageOptimizer.__new__(PackageOptimizer)
+    worker.contract = "optimizer_v1"
+    worker.candidate_schema = CandidateSchema(representation="binary", dimensions=2)
+    worker.pending = [Proposal(id="proposal-1", candidate=[0, 1])]
+    worker.count = 0
+    context = {"fidelity": {"rcwa_order_x": 10, "rcwa_order_y": 5},
+               "evaluator_id": "meent_rcwa_2d", "evaluator_version": "meent-0.13.2-flrl-2d-v1"}
+    worker.context = {"parameters": {"evaluation_context": context}, "problem": {
+        "scientific_identity": "fixture-physics", "primary_objective": {"name": "mean_plus1_transmission", "direction": "maximize"},
+        "extra_metrics": [{"name": name} for name in
+                          ("te_plus1_transmission", "tm_plus1_transmission", "min_plus1_transmission")]}}
+    observed = []
+    worker.observe = lambda batch: observed.extend(batch)
+    worker.tell([0, 1], .4)
+    assert observed[0].evaluator_identity == digest({"instance": "fixture-physics", "fidelity": context["fidelity"],
+                                                     "evaluator": [context["evaluator_id"], context["evaluator_version"]]})
+    assert set(observed[0].objectives) == {"mean_plus1_transmission", "te_plus1_transmission",
+                                            "tm_plus1_transmission", "min_plus1_transmission"}

@@ -45,7 +45,7 @@ class MechanismCheck(Contract):
 class DiagnosticCheck(Contract):
     """A protected, service-owned fixture family with no candidate-supplied oracle."""
     name: str = Field(min_length=1, max_length=200)
-    kind: Literal["h12_fourier_decoder", "h12_covariance_refactor", "h12_replay_context"]
+    kind: Literal["h12_fourier_decoder", "h12_covariance_refactor", "h12_replay_context", "h12_cache_identity"]
 
 
 class ImplementationSpec(Contract):

@@ -26,8 +26,10 @@ def context(spec, n_cells, seed, parameters=None, *, registry=None):
     values = dict(spec.parameters if parameters is None else parameters)
     check_parameters(values, spec.parameter_schema)
     instance = (registry or problems).get(spec.problem_id).implementation_fixture(spec.problem_configuration, n_cells)
+    descriptor = instance.descriptor()
+    descriptor["extra_metrics"] = [metric.model_dump(mode="json") for metric in instance.extra_metrics]
     return {"n_cells": n_cells, "seed": seed, "parameters": values, "schedule_steps": 64,
-            "capabilities": instance.capabilities, "problem": instance.descriptor()}
+            "capabilities": instance.capabilities, "problem": descriptor}
 
 
 def validate_package(spec, package, package_dir, runtime_root, runtime, *, progress=lambda: None, registry=None, evaluator_digest=None):
@@ -166,7 +168,9 @@ def validate_package(spec, package, package_dir, runtime_root, runtime, *, progr
                         try:
                             if case.kind == "h12_fourier_decoder":
                                 return fixtures.fourier_decoder(optimizer)
-                            return fixtures.covariance_refactor(optimizer)
+                            if case.kind == "h12_covariance_refactor":
+                                return fixtures.covariance_refactor(optimizer)
+                            return fixtures.cache_identity(optimizer)
                         finally:
                             optimizer.close()
                     check(case.name, diagnostic)
@@ -222,7 +226,17 @@ def validate_package(spec, package, package_dir, runtime_root, runtime, *, progr
                     efficiency = result.objectives[instance.primary_objective.name]
                     if not math.isfinite(efficiency):
                         raise ValueError("Evaluator returned a nonfinite objective")
-                    optimizer.tell(design, instance.primary_objective.utility(efficiency))
+                    if optimizer.contract == "optimizer_v1":
+                        from optimization_framework.contracts.problems import Observation
+                        pending = optimizer.pending[0]
+                        optimizer.observe([Observation(id=f"physical_{len(observations)}", experiment_id="correctness_physical",
+                            attempt_id="correctness_physical", request_id=f"physical_{len(observations)}",
+                            proposal_id=pending.id, candidate=design.tolist(), status="ok",
+                            objectives=result.objectives, fidelity=instance.fidelity,
+                            evaluator_identity=instance.evaluation_identity,
+                            costs={"solver_executions": result.solver_executions})])
+                    else:
+                        optimizer.tell(design, instance.primary_objective.utility(efficiency))
                     solver_calls += result.solver_executions
                     cache_hits += int(result.cache_hit)
                     observations.append({"candidate": design.tolist(), "objectives": result.objectives})

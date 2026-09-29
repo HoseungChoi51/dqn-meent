@@ -7,7 +7,7 @@ import os
 from pathlib import Path
 from typing import Literal
 
-from pydantic import Field
+from pydantic import Field, model_validator
 from optimization_framework.contracts.base import Contract, content_hash
 from optimization_framework.storage.sqlite import atomic_json, now
 from .development_runtime import DockerWorkspace
@@ -44,8 +44,20 @@ class SubmissionManifest(Contract):
 
 class WorkspaceValidate(Contract):
     submission_id: str
-    spec: dict
+    spec: dict | None = None
+    envelope_id: str | None = None
     compute_seconds: float = Field(gt=0, le=86400)
+    request_key: str = Field(min_length=1, max_length=200)
+
+    @model_validator(mode="after")
+    def one_specification(self):
+        if (self.spec is None) == (self.envelope_id is None):
+            raise ValueError("Provide exactly one frozen spec or validation envelope ID")
+        return self
+
+
+class WorkspaceEnvelope(Contract):
+    spec: dict
     request_key: str = Field(min_length=1, max_length=200)
 
 
@@ -73,6 +85,8 @@ class DevelopmentWorkspaces:
             "ide_url": base + f"/implementation-workspaces/{record['id']}/ide/?folder=/work/repo",
             "runtime": {"running": runtime.get("running", False), "paused": runtime.get("paused", False)},
             "terminal_command": f"docker exec --user 1000:1000 -it {self.driver.name(record)} tmux attach-session -t implementation",
+            "validation_envelopes": [{k: v for k, v in e.items() if k != "spec"}
+                for e in self.store.list("development_envelope", record["campaign_id"]) if e["workspace_id"] == record["id"]],
             "submissions": [{k: v for k, v in s.items() if k != "package"} for s in self.store.list("development_submission", record["campaign_id"]) if s["workspace_id"] == record["id"]],
             "questions": [q for q in self.store.list("development_question", record["campaign_id"]) if q["workspace_id"] == record["id"] and q["status"] == "pending"]}
 
@@ -390,7 +404,13 @@ class DevelopmentWorkspaces:
         submission = self.store.get(values.submission_id, "development_submission")
         if submission["workspace_id"] != identity:
             raise ValueError("Submission belongs to another workspace")
-        spec = (BoundOptimizerSpec if values.spec.get("evaluator_version_id") else ImplementationSpec).model_validate(values.spec)
+        source = values.spec
+        if values.envelope_id:
+            envelope = self.store.get(values.envelope_id, "development_envelope")
+            if envelope["workspace_id"] != identity or envelope["campaign_id"] != campaign_id:
+                raise ValueError("Validation envelope belongs to another workspace")
+            source = envelope["spec"]
+        spec = (BoundOptimizerSpec if source.get("evaluator_version_id") else ImplementationSpec).model_validate(source)
         if spec.dependencies != submission["manifest"]["dependencies"]:
             raise ValueError("Validation dependencies must match the committed submission manifest")
         capability = implementation_execution()
@@ -403,6 +423,30 @@ class DevelopmentWorkspaces:
         submission.update(grant_id=grant["id"], status="validating")
         self.store.put("development_submission", submission, "development.validation_requested")
         return {"submission_id": submission["id"], "grant_id": grant["id"]}
+
+    def freeze_envelope(self, campaign_id, identity, payload):
+        from optimization_framework.implementations.models import BoundOptimizerSpec, ImplementationSpec, digest
+        values = WorkspaceEnvelope.model_validate(payload)
+        record = self.get(campaign_id, identity)
+        spec = (BoundOptimizerSpec if values.spec.get("evaluator_version_id") else ImplementationSpec).model_validate(values.spec)
+        if spec.problem_id != self.store.get(record["hypothesis_id"], "hypothesis").get("problem_id", spec.problem_id):
+            raise ValueError("Validation envelope uses a different problem")
+        serialized = spec.model_dump(mode="json")
+        identity_hash = digest(serialized)
+        envelope_id = "development_envelope_" + content_hash([identity, identity_hash])[:24]
+        with self.workspace.lock, self.store.transaction():
+            try:
+                saved = self.store.get(envelope_id, "development_envelope")
+            except KeyError:
+                saved = self.store.put_immutable("development_envelope", {"id": envelope_id,
+                    "workspace_id": identity, "campaign_id": campaign_id, "hypothesis_id": record["hypothesis_id"],
+                    "created_at": now(), "request_key": values.request_key, "spec_digest": identity_hash,
+                    "spec": serialized, "checks": {"behavior": len(spec.behavior_checks),
+                        "mechanism": len(spec.mechanism_checks), "diagnostic": len(spec.diagnostic_checks)},
+                    "problem_id": spec.problem_id, "n_cells": [spec.n_cells_min, spec.n_cells_max],
+                    "dependencies": spec.dependencies}, "development.envelope_frozen")
+                self.notify(record, envelope_id, f"Protected validation envelope {envelope_id} frozen with spec digest {identity_hash}. Use this ID with implementation_workspace_validate after an exact submission and explicit remaining allocation; do not reinsert the full specification into PI context.")
+            return {k: v for k, v in saved.items() if k != "spec"}
 
     def validation_feedback(self, record):
         for submission in self.store.list("development_submission", record["campaign_id"]):
