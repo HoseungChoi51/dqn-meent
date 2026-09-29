@@ -184,14 +184,15 @@ class ImplementationBridge:
         return sum(g.get("compute_seconds", 0) if settled(g) else max(g["request"]["compute_seconds"], g.get("compute_seconds", 0))
                    for g in self.store.list("implementation_grant", campaign_id))
 
-    def commission(self, hypothesis_id, spec, *, compute_seconds, max_calls=12, api_budget_usd=0, idempotency_key, package=None, expected_context=None):
+    def commission(self, hypothesis_id, spec, *, compute_seconds, max_calls=12, api_budget_usd=0, idempotency_key, package=None, expected_context=None, accounting_mode="wall"):
         self.catalog(refresh=True)
         grant = self.reserve_commission(hypothesis_id, spec, compute_seconds=compute_seconds, max_calls=max_calls,
-            api_budget_usd=api_budget_usd, idempotency_key=idempotency_key, package=package, expected_context=expected_context)
+            api_budget_usd=api_budget_usd, idempotency_key=idempotency_key, package=package, expected_context=expected_context,
+            accounting_mode=accounting_mode)
         self.workspace.dispatch_outbox()
         return self.store.get(grant["id"], "implementation_grant")
 
-    def reserve_commission(self, hypothesis_id, spec, *, compute_seconds, max_calls=12, api_budget_usd=0, idempotency_key, package=None, expected_context=None, task_id=None):
+    def reserve_commission(self, hypothesis_id, spec, *, compute_seconds, max_calls=12, api_budget_usd=0, idempotency_key, package=None, expected_context=None, task_id=None, accounting_mode="wall"):
         """Commit the grant and delivery intent together; never send from a transaction."""
         with self.workspace.lock, self.store.transaction():
             if task_id is not None:
@@ -226,7 +227,8 @@ class ImplementationBridge:
                 compute_seconds=compute_seconds, max_calls=max_calls, api_budget_usd=api_budget_usd,
                 model_policy=model_policy,
                 agent_parent_id=(grant["request"].get("agent_parent_id") if grant else
-                    (self.workspace.pi.configuration(campaign_id) or {}).get("pi_id") if self.workspace.pi.owns(campaign_id) else None)).model_dump()
+                    (self.workspace.pi.configuration(campaign_id) or {}).get("pi_id") if self.workspace.pi.owns(campaign_id) else None),
+                accounting_mode=accounting_mode).model_dump()
             if (request["spec"].get("kind") == "evaluator") != (task_id is not None):
                 raise ValueError("Commission this executable against the matching optimizer or evaluator requirement")
             if grant:

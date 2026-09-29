@@ -5,6 +5,7 @@ import type { State, Json } from './api';
 import { useCommand } from './commands';
 import { Badge, ErrorNotice, Field, Icon } from './ui';
 import { TextContent } from './textContent';
+import { DevelopmentPanel } from './development';
 
 export function PiAgentPanel({ state, refresh, connectionError }: { state: State; refresh: () => Promise<void>; connectionError?: string }) {
   const runtime = state.agent_runtime!;
@@ -40,7 +41,7 @@ export function PiAgentPanel({ state, refresh, connectionError }: { state: State
   }
   const agents: Json[] = runtime.agents || [];
   const pi = agents.find(a => a.role === 'pi');
-  return <section className="research-progress pi-panel" aria-label="PI agent campaign">
+  return <><section className="research-progress pi-panel" aria-label="PI agent campaign">
     <div className="research-progress-heading"><div><h2>PI agent</h2><Badge>{config.provider?.configured ? pi?.status || config.status : 'waiting for sign-in'}</Badge></div>
       <div className="research-progress-actions">
         {config.status === 'running' ? <button className="button small secondary" disabled={busy} onClick={() => void control('pause')}>Pause agents</button>
@@ -82,7 +83,7 @@ export function PiAgentPanel({ state, refresh, connectionError }: { state: State
         </div>}
       </article>)}</div>
     </details>
-  </section>;
+  </section><DevelopmentPanel state={state} refresh={refresh} /></>;
 }
 
 export function PiConversation({state,refresh,onClose}:{state:State;refresh:()=>Promise<void>;onClose:()=>void}) {

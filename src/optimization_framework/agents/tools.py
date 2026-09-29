@@ -37,6 +37,11 @@ Existing working evaluators and bundled implementations must be reused when comp
 only after checking the current capabilities and saved evidence. Do not repeat denied reads or duplicate reviews.
 The PI owns delegation and execution under existing campaign grants. Subagents return artifacts and findings to the PI.
 Implementation builders, test designers and reviewers work independently under frozen service specifications.
+For substantial programming, use implementation_workspace_create to delegate to a full native Pi coding session
+with a browser IDE and normal shell/Git tools. Use implementation_workspace_inspect, implementation_workspace_message,
+and implementation_workspace_validate for supervision and independent validation. Do not assume that workspace
+creation or a submitted commit establishes correctness. The old short-script implementation path remains available
+for historical grants and lightweight compatibility work.
 Use command_schema to inspect supported commands, then campaign_command with the exact current guidance revision
 and a stable request_key describing the intended operation. If a request timed out, inspect its receipt before retrying.
 For 2D masks, each TE/TM evaluation costs two forward solves; source-code availability is not effectiveness evidence.
@@ -69,6 +74,10 @@ TOOLS = {
     "agent_cancel": ("Cancel a child assignment while retaining its artifacts and costs.", obj({"agent_id": S}, ["agent_id"])),
     "command_schema": ("Read the exact schema of an execution command before preparing it.", obj({"operation": {"enum": sorted(OPERATIONS)}}, ["operation"])),
     "campaign_command": ("Execute a campaign command within existing delegation. Returns a durable receipt; never grants new authority.", obj({"operation": {"enum": sorted(OPERATIONS)}, "payload": {"type": "object"}, "request_key": S, "guidance_revision": {"type": "integer", "minimum": 0}}, ["operation", "payload", "request_key", "guidance_revision"])),
+    "implementation_workspace_create": ("Start or reattach a persistent full Pi coding workspace for an active hypothesis. No numerical grant is reserved by creation.", obj({"hypothesis_id": S, "objective": S, "evidence_ids": {"type": "array", "items": S, "maxItems": 100}, "request_key": S, "cpu_budget_seconds": {"type": "number", "exclusiveMinimum": 0, "maximum": 86400}}, ["hypothesis_id", "objective", "request_key"])),
+    "implementation_workspace_inspect": ("Read implementation workspace state, progress, questions, submissions, and event cursor.", obj({"workspace_id": S, "after": {"type": "integer", "minimum": 0}}, ["workspace_id"])),
+    "implementation_workspace_message": ("Steer or follow up with the full Pi coding agent in the given workspace.", obj({"workspace_id": S, "message": S, "mode": {"enum": ["steer", "follow_up"]}, "request_key": S, "question_id": S}, ["workspace_id", "message", "request_key"])),
+    "implementation_workspace_validate": ("Commission independent validation of one committed source submission within the campaign's implementation allocation.", obj({"workspace_id": S, "submission_id": S, "spec": {"type": "object"}, "compute_seconds": {"type": "number", "exclusiveMinimum": 0, "maximum": 86400}, "request_key": S}, ["workspace_id", "submission_id", "spec", "compute_seconds", "request_key"])),
     "researcher_ask": ("Save a concrete researcher question and stop for its answer only when required.", obj({"question": S, "reason": S}, ["question", "reason"])),
     "yield_work": ("Checkpoint task disposition. Waiting jobs wake the PI automatically; completion must cite actual evidence.", obj({"disposition": {"enum": ["waiting", "complete", "handoff"]}, "summary": S, "evidence_ids": {"type": "array", "items": S, "maxItems": 100}}, ["disposition", "summary"])),
     "workspace_list": ("List this implementation assignment's isolated files.", obj()),
@@ -87,7 +96,9 @@ class PiTools:
     def names(self, agent):
         names = {"campaign_inspect", "evidence_search", "evidence_read", "source_search", "source_ingest", "source_read", "artifact_save", "mask_create", "yield_work"}
         if agent["role"] == "pi":
-            names |= {"delegate", "agent_message", "agent_cancel", "command_schema", "campaign_command", "researcher_ask"}
+            names |= {"delegate", "agent_message", "agent_cancel", "command_schema", "campaign_command", "researcher_ask",
+                      "implementation_workspace_create", "implementation_workspace_inspect", "implementation_workspace_message",
+                      "implementation_workspace_validate"}
         if agent["role"] == "proposal_reviewer":
             names.add("proposal_review")
         if agent.get("grant_id"):
@@ -218,6 +229,14 @@ class PiTools:
         cid = agent["campaign_id"]
         if name == "campaign_inspect":
             return self.inspect(agent)
+        if name == "implementation_workspace_create":
+            return self.controller.development.create(cid, args, actor="pi")
+        if name == "implementation_workspace_inspect":
+            return self.controller.development.events(cid, args["workspace_id"], args.get("after", 0))
+        if name == "implementation_workspace_message":
+            return self.controller.development.message(cid, args["workspace_id"], {k: v for k, v in args.items() if k != "workspace_id"}, actor="pi")
+        if name == "implementation_workspace_validate":
+            return self.controller.development.validate(cid, args["workspace_id"], {k: v for k, v in args.items() if k != "workspace_id"})
         if name == "evidence_read":
             record = self.record(agent, args["record_id"])
             return view_record(record, record_id=args["record_id"], pointer=args.get("pointer", ""), offset=args.get("offset", 0),

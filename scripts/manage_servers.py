@@ -20,6 +20,7 @@ import subprocess
 import sys
 import time
 import urllib.error
+from urllib.parse import urlparse
 import urllib.request
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -69,6 +70,15 @@ def configuration(path, no_llm=False):
     if "codex_timeout_seconds" in config and (type(config["codex_timeout_seconds"]) not in {int, float}
             or not 5 <= config["codex_timeout_seconds"] <= 600):
         raise LauncherError("codex_timeout_seconds must be between 5 and 600 seconds.")
+    if type(config.get("development_enabled", False)) is not bool:
+        raise LauncherError("development_enabled must be a boolean.")
+    if config.get("development_public_url"):
+        parsed = urlparse(str(config["development_public_url"]))
+        # Tailscale's authenticated HTTP listener is encrypted on the TailNet
+        # even when the browser-facing URL itself is not HTTPS.
+        if (parsed.scheme != "https" and not (parsed.scheme == "http" and
+                (parsed.hostname or "").endswith(".ts.net")) or not parsed.netloc or parsed.path not in {"", "/"}):
+            raise LauncherError("development_public_url must be HTTPS or a TailNet .ts.net HTTP URL.")
     if no_llm:
         config["llm_enabled"] = False
     return config
@@ -177,6 +187,8 @@ def service_environment(config):
                GRATING_LLM_DISABLED=str(not config["llm_enabled"]).lower(),
                GRATING_IMPLEMENTATIONS_URL=f"http://127.0.0.1:{config['implementation_port']}",
                GRATING_IMPLEMENTATIONS_TOKEN_FILE=str(Path(config["directory"]) / "library/service.token"),
+               GRATING_DEVELOPMENT_ENABLED=str(config.get("development_enabled", False)).lower(),
+               GRATING_DEVELOPMENT_PUBLIC_URL=config.get("development_public_url", ""),
                PYTHONUNBUFFERED="1")
     if "codex_timeout_seconds" in config:
         env["GRATING_CODEX_TIMEOUT_SECONDS"] = str(config["codex_timeout_seconds"])

@@ -8,7 +8,7 @@ from pathlib import Path
 import threading
 import time
 
-from optimization_framework.implementations.models import (BehaviorCheck, MechanismCheck, BoundOptimizerSpec, BuildResult, Contract, EvaluatorSpec, ImplementationSpec, JobRequest,
+from optimization_framework.implementations.models import (BehaviorCheck, MechanismCheck, DiagnosticCheck, BoundOptimizerSpec, BuildResult, Contract, EvaluatorSpec, ImplementationSpec, JobRequest,
                      Package, ReviewResult, RevalidationRequest, CapabilityUnavailable, check_parameters, digest, parse_job_request)
 from optimization_framework.implementations.runtime import PROTOCOL, prepare_runtime, tree_hashes, write_package
 from optimization_framework.implementations.validation import evaluator_identity, profile_identity, validate_package
@@ -24,6 +24,15 @@ initialize(problem_descriptor, parameters, seed, declared_assets),
 propose(max_candidates)->list of {'id':stable_proposal_id,'candidate':candidate},
 observe(list of observation dictionaries with proposal_id,status,objectives,constraints,costs),
 checkpoint()->bytes, restore(bytes), inspect()->JSON diagnostics, export_artifacts()->optional JSON list.
+When the frozen specification declares H12 protected diagnostics, implement
+diagnostic(operation, payload)->JSON. Supported operations are
+decode_fourier_mask with {'mode':[Nx,Ny],'coefficients':[float,...]} returning
+{'mask':[32768 binary pixels in x-major order]}, and covariance_refactor with
+{'matrix':square symmetric float matrix,'rank':int,'floor':float,'cap':float}
+returning {'diagonal':[float,...],'low_rank':[[float,...],...]}, with low_rank
+stored as rows of a matrix with at most rank columns. This hook exercises the
+same decoder and covariance refactor used by the optimizer; it must not advance
+the search, use the evaluator, or return a self-reported pass/fail answer.
 If execution_capabilities declares optimizer_decisions, inspect() must return a nonnegative monotonic
 integer 'decisions' counter consistent with the specified procedure. For each declared export, return
 one object with kind, format, metadata and JSON-serializable data. Exporting must not advance the search
@@ -69,6 +78,7 @@ If implementation is impossible return package=null and a concrete blocker. Repo
 class ValidationPlan(Contract):
     checks: list[BehaviorCheck]
     mechanism_checks: list[MechanismCheck] = []
+    diagnostic_checks: list[DiagnosticCheck] = []
     rationale: str
     blocker: str | None
 
@@ -247,11 +257,18 @@ class ImplementationService:
         started, spent = time.monotonic(), job["compute_seconds"]
         adapter = None
         last_accounted = started
+        excluded_model_seconds = 0.0
+        model_started = None
+
+        def charged_elapsed():
+            active_model_seconds = time.monotonic() - model_started if model_started is not None else 0.0
+            elapsed = time.monotonic() - started
+            return max(0.0, elapsed - excluded_model_seconds - active_model_seconds) if request.accounting_mode == "execution_v1" else elapsed
 
         def progress():
             nonlocal last_accounted
             current = self.store.get(job_id, "implementation_job")
-            elapsed = time.monotonic() - started
+            elapsed = charged_elapsed()
             if time.monotonic() - last_accounted >= 1:
                 self.update_job(job_id, compute_seconds=spent + elapsed)
                 last_accounted = time.monotonic()
@@ -268,6 +285,17 @@ class ImplementationService:
                     self.update_job(job_id, usage=event["usage"])
             if event["type"] not in {"provider_response", "provider_error"}:
                 progress()
+
+        def model_call(role, context, **options):
+            nonlocal model_started, excluded_model_seconds
+            if request.accounting_mode != "execution_v1":
+                return adapter.call(role, context, **options)
+            model_started = time.monotonic()
+            try:
+                return adapter.call(role, context, **options)
+            finally:
+                excluded_model_seconds += time.monotonic() - model_started
+                model_started = None
 
         try:
             registry, bound_evaluator_digest = None, None
@@ -290,7 +318,7 @@ class ImplementationService:
             factory = self.adapter_factory or LLMAdapter
             if request.agent_parent_id:
                 from optimization_framework.agents.implementation import PiImplementationAdapter
-                adapter = PiImplementationAdapter(request, deadline_monotonic=started + request.compute_seconds - spent,
+                adapter = PiImplementationAdapter(request, deadline_monotonic=started + (86400 if request.accounting_mode == "execution_v1" else request.compute_seconds - spent),
                     progress=progress, usage=job.get("usage") or None)
             else:
                 adapter = factory(max_calls=request.max_calls, max_output_tokens=8192,
@@ -305,23 +333,25 @@ class ImplementationService:
                         "cases": [case.model_dump() for case in spec.correctness_cases],
                         "rationale": "Independent fixtures frozen in the commissioning request"})
             elif not job.get("validation_plan"):
-                if request.spec.behavior_checks:
+                if request.spec.behavior_checks or request.spec.diagnostic_checks:
                     plan = ValidationPlan(checks=request.spec.behavior_checks, mechanism_checks=request.spec.mechanism_checks,
+                        diagnostic_checks=request.spec.diagnostic_checks,
                         rationale="Commissioned acceptance checks", blocker=None)
                 else:
-                    plan = adapter.call("implementation_test_designer", {"spec": request.spec.model_dump()},
-                        result_type=ValidationPlan, instructions="Design protected, inexpensive black-box checks of this declared algorithm before seeing any candidate code. Choose supported assertions; use exact_designs for a hand-calculated deterministic reference. Use mechanism_checks on optimizer_v1 inspect() JSON pointers for necessary normalization, tangent-space, PSD and rank invariants; require those fields in the frozen plan. Do not assert performance superiority. If the mechanism is underspecified or cannot be checked with this contract, return a concrete blocker. At least one behavioral check is required.")
+                    plan = model_call("implementation_test_designer", {"spec": request.spec.model_dump()},
+                        result_type=ValidationPlan, instructions="Design protected, inexpensive black-box checks of this declared algorithm before seeing any candidate code. Choose supported assertions; use exact_designs for a hand-calculated deterministic reference. Use mechanism_checks on optimizer_v1 inspect() JSON pointers for necessary normalization, tangent-space, PSD and rank invariants. For H12 choose h12_fourier_decoder, h12_covariance_refactor and h12_replay_context diagnostic checks; these use service-owned programmatic fixtures, not literal 32768-bit masks. Do not assert performance superiority. If the mechanism is underspecified or cannot be checked with this contract, return a concrete blocker. At least one behavior or diagnostic check is required.")
                     self.update_job(job_id, usage=adapter.usage)
-                if plan.blocker or not plan.checks:
+                if plan.blocker or not (plan.checks or plan.diagnostic_checks):
                     raise CapabilityUnavailable(plan.blocker or "A specification-specific validation check is required")
                 job = self.update_job(job_id, validation_plan=plan.model_dump())
             if not is_evaluator:
                 spec = request.spec.model_copy(update={"behavior_checks": [BehaviorCheck.model_validate(c) for c in job["validation_plan"]["checks"]],
-                    "mechanism_checks": [MechanismCheck.model_validate(c) for c in job["validation_plan"].get("mechanism_checks", [])]})
+                    "mechanism_checks": [MechanismCheck.model_validate(c) for c in job["validation_plan"].get("mechanism_checks", [])],
+                    "diagnostic_checks": [DiagnosticCheck.model_validate(c) for c in job["validation_plan"].get("diagnostic_checks", [])]})
                 spec = type(request.spec).model_validate(spec.model_dump())
             progress()
             runtime_root, runtime = prepare_runtime(self.directory / "runtimes", spec.dependencies,
-                allow_download=self.allow_download, timeout=max(1, request.compute_seconds-spent-(time.monotonic()-started)),
+                allow_download=self.allow_download, timeout=max(1, request.compute_seconds-spent-charged_elapsed()),
                 kind="evaluator" if is_evaluator else "optimizer")
             progress()
             attempts = copy.deepcopy(job["attempts"])
@@ -342,7 +372,7 @@ class ImplementationService:
                         if is_evaluator:
                             previous = [{"package": a["package"], "checks": [{"name": c["name"], "passed": c["passed"]}
                                 for c in (a["report"] or {}).get("checks", [])]} for a in previous]
-                        candidate = adapter.call("implementation_builder", {"spec": spec.model_dump(exclude={"correctness_cases"} if is_evaluator else set()),
+                        candidate = model_call("implementation_builder", {"spec": spec.model_dump(exclude={"correctness_cases"} if is_evaluator else set()),
                             "previous_attempts": previous}, result_type=BuildResult,
                             instructions=EVALUATOR_BUILD_INSTRUCTIONS if is_evaluator else BUILD_INSTRUCTIONS)
                         self.update_job(job_id, usage=adapter.usage)
@@ -370,7 +400,7 @@ class ImplementationService:
                     self.update_job(job_id, attempts=attempts)
                 if attempt["report"]["passed"] and not attempt.get("review"):
                     self.update_job(job_id, status="reviewing")
-                    review = adapter.call("implementation_validator", {"spec": spec.model_dump(),
+                    review = model_call("implementation_validator", {"spec": spec.model_dump(),
                         "package": attempt["package"], "report": attempt["report"]},
                         result_type=ReviewResult, instructions=REVIEW_INSTRUCTIONS)
                     self.update_job(job_id, usage=adapter.usage)
@@ -428,7 +458,7 @@ class ImplementationService:
                 self.update_job(job_id, status="needs_reconciliation" if uncertain else "failed",
                                 error=f"Implementation workflow failed ({type(exc).__name__}): {str(exc)[:1500]}")
         finally:
-            changes = {"compute_seconds": spent + time.monotonic() - started, "accounting_final": True}
+            changes = {"compute_seconds": spent + charged_elapsed(), "accounting_final": True}
             if adapter:
                 changes["usage"] = adapter.usage
             current = self.store.get(job_id, "implementation_job")

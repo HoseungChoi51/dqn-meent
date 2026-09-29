@@ -42,6 +42,22 @@ class FakeAdapter:
         return ReviewResult(passed=True, criteria=payload["spec"]["acceptance_criteria"], findings=["Checked each criterion against source and report"])
 
 
+def test_submitted_package_charges_execution_separately_from_model_wait(tmp_path):
+    class SlowReviewAdapter(FakeAdapter):
+        def call(self, *args, **kwargs):
+            time.sleep(1.1)
+            return super().call(*args, **kwargs)
+
+    assert 'accounting_mode' not in request().model_dump()
+    service = ImplementationService(tmp_path, adapter_factory=SlowReviewAdapter)
+    submitted = request(package=package().model_dump(), accounting_mode='execution_v1', compute_seconds=20)
+    began = time.monotonic()
+    result = service.run_job(service.submit(submitted)['id'])
+    elapsed = time.monotonic() - began
+    assert result['status'] == 'completed', result
+    assert 0 < result['compute_seconds'] < elapsed - .8
+
+
 def request(**changes):
     return JobRequest.model_validate({"workspace_id": "workspace_one", "campaign_id": "campaign_one", "idempotency_key": "build-one",
         "grant_id": "grant_one", "spec": specification().model_dump(), "compute_seconds": 120, **changes})

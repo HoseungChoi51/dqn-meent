@@ -15,7 +15,7 @@ from optimization_framework.storage.sqlite import identifier, now
 
 def profile_identity():
     root = Path(__file__).parent
-    return digest({name: file_hash(root / name) for name in ("validation.py", "runtime.py", "models.py", "revalidation.py")})
+    return digest({name: file_hash(root / name) for name in ("validation.py", "protected_diagnostics.py", "runtime.py", "models.py", "revalidation.py")})
 
 
 def evaluator_identity():
@@ -152,6 +152,24 @@ def validate_package(spec, package, package_dir, runtime_root, runtime, *, progr
                 optimizer.close()
         if spec.execution_capabilities.exports or "optimizer_decisions" in spec.execution_capabilities.completion_units:
             check("declared diagnostic capabilities and independent export", diagnostic_capabilities)
+
+        if spec.diagnostic_checks:
+            from optimization_framework.implementations import protected_diagnostics as fixtures
+            if package.get("contract", "ask_tell") != "optimizer_v1":
+                raise ValueError("Protected diagnostic fixtures require optimizer_v1")
+            for case in spec.diagnostic_checks:
+                if case.kind == "h12_replay_context":
+                    check(case.name, lambda: fixtures.replay_context(create))
+                else:
+                    def diagnostic(case=case):
+                        optimizer = create(256 * 128, 419)
+                        try:
+                            if case.kind == "h12_fourier_decoder":
+                                return fixtures.fourier_decoder(optimizer)
+                            return fixtures.covariance_refactor(optimizer)
+                        finally:
+                            optimizer.close()
+                    check(case.name, diagnostic)
 
         for case in spec.behavior_checks:
             def behavior(case=case):

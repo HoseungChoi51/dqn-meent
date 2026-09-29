@@ -26,6 +26,8 @@ class PiController:
         self.threads = {}
         self.diagnostic_processes = {}
         self.tool_locks = {}
+        from .development import DevelopmentWorkspaces
+        self.development = DevelopmentWorkspaces(self)
 
     def rollback(self, campaign_id, payload):
         from .models import Rollback
@@ -216,7 +218,8 @@ class PiController:
             "agents": [{k: v for k, v in a.items() if k not in {"output_schema", "output"}}
                        for a in self.store.list("agent_session", campaign_id)],
             "questions": [q for q in self.store.list("agent_question", campaign_id) if q["status"] == "pending"],
-            "aliases": self.store.list("agent_alias", campaign_id)}
+            "aliases": self.store.list("agent_alias", campaign_id),
+            "development": self.development.view(campaign_id)}
 
     def progress(self, campaign_id):
         view = self.view(campaign_id)
@@ -247,6 +250,7 @@ class PiController:
     def _sync(self, campaign_id):
         status = None
         try:
+            self.development.sync(campaign_id)
             status = self.client.status()
             if os.environ.get("GRATING_LLM_ENABLED", "true").lower() == "false" or os.environ.get("GRATING_LLM_DISABLED", "false").lower() == "true":
                 status = {**status, "configured": False, "reason": "Model calls are disabled in the server configuration"}

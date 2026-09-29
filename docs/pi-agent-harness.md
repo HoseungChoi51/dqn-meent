@@ -7,6 +7,11 @@ All sessions currently use `xhigh` reasoning. Models are pinned for each session
 historical chat/discovery model settings do not alter a Pi session. No paid API
 fallback is configured.
 
+The [full Pi implementation workspace](pi-implementation-workspace-plan.md)
+documents the browser IDE, native Pi CLI sessions, developer and PI interaction,
+development accounting, and the active H12 pilot. Its independent protected
+validation still requires a submitted implementation and an authorized grant.
+
 ## Deployment and sign-in
 
 Run `npm ci && npm run build` in `agent-harness` and build `frontend`. A launcher

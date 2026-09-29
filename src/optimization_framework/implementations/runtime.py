@@ -354,6 +354,7 @@ for line in sys.stdin.buffer:
             elif op=='evaluate' and contract=='evaluator_v1': result = optimizer.evaluate(request['candidate'])
             elif op=='inspect': result = optimizer.inspect()
             elif op=='export_artifacts': result = optimizer.export_artifacts() if hasattr(optimizer,'export_artifacts') else []
+            elif op=='diagnostic' and contract=='optimizer_v1': result = optimizer.diagnostic(request['name'],request['payload'])
             elif op=='checkpoint':
                 raw = optimizer.checkpoint()
                 if not isinstance(raw,bytes) or len(raw)>checkpoint_limit: raise ValueError('Checkpoint exceeds its declared byte allowance')
@@ -614,6 +615,11 @@ class PackageOptimizer(PackageProcess):
 
     def export_artifacts(self):
         return self._request("export_artifacts") if self.contract == "optimizer_v1" else []
+
+    def diagnostic(self, name, payload):
+        if self.contract != "optimizer_v1":
+            raise ValueError("Protected diagnostics require optimizer_v1")
+        return self._request("diagnostic", name=name, payload=payload)
 
     def diagnostics(self):
         return {"protocol": PROTOCOL, "runtime_digest": self.runtime_digest, "observations": self.count}

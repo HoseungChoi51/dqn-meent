@@ -88,7 +88,11 @@ def install(app, workspace):
         with workspace.lock, workspace.store.transaction():
             agent = workspace.pi.create_agent(campaign_id, role, body["instructions"], identity,
                 parent_id=config["pi_id"], grant_id=grant["id"], output_schema=body["output_schema"])
-            agent["deadline_at"] = min(body["deadline_at"], time.time() + grant["request"]["compute_seconds"])
+            # Submitted source was developed in a separate durable Pi session.
+            # Its independent design/review calls do not consume numerical
+            # execution time; the library enforces that allocation itself.
+            review_window = 86400 if grant["request"].get("accounting_mode") == "execution_v1" else grant["request"]["compute_seconds"]
+            agent["deadline_at"] = min(body["deadline_at"], time.time() + review_window)
             workspace.store.put("agent_session", agent)
             import json
             run = workspace.pi.enqueue(agent, "pi_impl_run_" + body["request_id"], json.dumps(body["context"]), mode="follow_up")

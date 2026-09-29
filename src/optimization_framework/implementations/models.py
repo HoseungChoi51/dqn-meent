@@ -42,6 +42,12 @@ class MechanismCheck(Contract):
     tolerance: float = Field(default=1e-8, gt=0, le=1e-3)
 
 
+class DiagnosticCheck(Contract):
+    """A protected, service-owned fixture family with no candidate-supplied oracle."""
+    name: str = Field(min_length=1, max_length=200)
+    kind: Literal["h12_fourier_decoder", "h12_covariance_refactor", "h12_replay_context"]
+
+
 class ImplementationSpec(Contract):
     name: str = Field(min_length=1, max_length=300)
     mechanism: str = Field(min_length=1, max_length=20000)
@@ -60,6 +66,7 @@ class ImplementationSpec(Contract):
     max_checkpoint_bytes: int = Field(default=256 * 1024**2, ge=1024, le=4 * 1024**3)
     behavior_checks: list[BehaviorCheck] = Field(default_factory=list, max_length=20)
     mechanism_checks: list[MechanismCheck] = Field(default_factory=list, max_length=20)
+    diagnostic_checks: list[DiagnosticCheck] = Field(default_factory=list, max_length=20)
     provenance: list[dict[str, Any]] = Field(default_factory=list, max_length=100)
     exposed_conditions: list[str] = Field(default_factory=list, max_length=10000)
 
@@ -68,6 +75,8 @@ class ImplementationSpec(Contract):
         result = handler(self)
         if not self.mechanism_checks:
             result.pop("mechanism_checks", None)
+        if not self.diagnostic_checks:
+            result.pop("diagnostic_checks", None)
         return result
 
     @model_validator(mode="after")
@@ -233,6 +242,7 @@ class JobRequest(Contract):
     grant_id: str = Field(min_length=1, max_length=200)
     model_policy: ModelPolicy | None = None
     agent_parent_id: str | None = None
+    accounting_mode: Literal["wall", "execution_v1"] = "wall"
 
     @model_serializer(mode="wrap")
     def compatible_serialization(self, handler):
@@ -242,6 +252,8 @@ class JobRequest(Contract):
             result.pop("model_policy", None)
         if self.agent_parent_id is None:
             result.pop("agent_parent_id", None)
+        if self.accounting_mode == "wall":
+            result.pop("accounting_mode", None)
         return result
 
     @model_validator(mode="before")
@@ -260,6 +272,8 @@ class JobRequest(Contract):
     def matching_kind(self):
         if self.package is not None and isinstance(self.spec, EvaluatorSpec) != isinstance(self.package, EvaluatorPackage):
             raise ValueError("Package kind must match the commissioned executable specification")
+        if self.accounting_mode == "execution_v1" and self.package is None:
+            raise ValueError("Execution accounting requires a committed submitted package")
         return self
 
 

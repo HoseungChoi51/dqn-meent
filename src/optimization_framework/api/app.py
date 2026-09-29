@@ -113,6 +113,8 @@ def create_app(directory=None, max_workers=2, start_workers=True, implementation
     install_agent_log(app, workspace)
     from optimization_framework.agents.api import install as install_pi
     install_pi(app, workspace)
+    from optimization_framework.agents.development_api import install as install_development
+    install_development(app, workspace)
 
     @app.get("/api/campaigns/{campaign_id}/discovery")
     def discovery(campaign_id: str):

@@ -4,6 +4,8 @@
   "workspace_port": 8765,
   "implementation_port": 8767,
   "pi_port": 8768,
+  "development_enabled": true,
+  "development_public_url": "http://strixhalo.tail096b61.ts.net:8765",
   "tailnet_port": null,
   "workers": 2,
   "provider": "codex",
