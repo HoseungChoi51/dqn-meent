@@ -115,7 +115,12 @@ class ImplementationBridge:
         if hypothesis.get("source"):
             return {"state": "validation_required", "runnable": False,
                     "reason": "Source is available, but requires independent implementation validation. Previous protocol checks remain in the record."}
-        reason = "This proposal has no executable implementation. Ask the campaign manager to build one or reuse a library version."
+        from .references import catalog
+        references = catalog(self.store, hypothesis["campaign_id"], hypothesis)
+        if references:
+            return {"state": "reference_available", "runnable": False, "references": references,
+                    "reason": "Reference code is available. Adapt this source to the campaign execution interface and validate it before running trials."}
+        reason = "No campaign implementation is attached. Link existing reference code or request an implementation."
         if hypothesis.get("algorithm") == "relaxed_gradient":
             reason += " It also requires continuous evaluation and RCWA gradients, which the current evaluator does not provide."
         return {"state": "missing", "runnable": False, "reason": reason}
@@ -219,7 +224,9 @@ class ImplementationBridge:
             request = JobRequest(workspace_id=self.workspace_id, campaign_id=campaign_id, hypothesis_id=hypothesis_id,
                 grant_id=identity, idempotency_key=idempotency_key, spec=spec, package=package,
                 compute_seconds=compute_seconds, max_calls=max_calls, api_budget_usd=api_budget_usd,
-                model_policy=model_policy).model_dump()
+                model_policy=model_policy,
+                agent_parent_id=(grant["request"].get("agent_parent_id") if grant else
+                    (self.workspace.pi.configuration(campaign_id) or {}).get("pi_id") if self.workspace.pi.owns(campaign_id) else None)).model_dump()
             if (request["spec"].get("kind") == "evaluator") != (task_id is not None):
                 raise ValueError("Commission this executable against the matching optimizer or evaluator requirement")
             if grant:

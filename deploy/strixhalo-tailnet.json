@@ -1,0 +1,13 @@
+{
+  "directory": "runs/workspace",
+  "frontend_directory": "frontend/dist",
+  "workspace_port": 8765,
+  "implementation_port": 8767,
+  "pi_port": 8768,
+  "tailnet_port": null,
+  "workers": 2,
+  "provider": "codex",
+  "model": "gpt-6-sol",
+  "llm_enabled": true,
+  "codex_timeout_seconds": 600
+}

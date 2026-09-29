@@ -73,3 +73,35 @@ def test_redirects_cannot_leave_primary_origins_and_size_is_bounded(monkeypatch)
         transport=httpx.MockTransport(lambda request: httpx.Response(200, content=b"x" * 11)), **kwargs))
     with pytest.raises(EvidenceError, match="retrieval limit"):
         literature.fetch_document("https://arxiv.org/pdf/2401.00001")
+
+
+def test_pinned_github_capture_preserves_code_and_reuses_the_exact_revision(tmp_path, monkeypatch):
+    real_client = httpx.Client
+    seen = []
+    code = b'def update(x):\n    if x < 2:\n        return "<mask>&amp;</mask>"\n'
+    def handle(request):
+        seen.append(str(request.url))
+        return httpx.Response(200, content=code, headers={"content-type": "text/plain; charset=utf-8"})
+    monkeypatch.setattr(literature.httpx, "Client", lambda **kwargs: real_client(transport=httpx.MockTransport(handle), **kwargs))
+    workspace = Workspace(tmp_path)
+    revision = '7838e71313d71cee8e2db3b432f41f80b9106a95'
+    workspace.store.put_immutable('source', {'id': 'reference', 'campaign_id': 'campaign',
+        'url': f'https://github.com/jLabKAIST/flrl/blob/{revision}/utils/utils_opt.py'})
+    reader = literature.LiteratureReader(workspace)
+    first = reader.read('campaign', source_id='reference')
+    assert first['passages'][0]['text'] == code.decode().strip()
+    assert first['capture']['coverage'] == 'full_text_captured'
+    assert reader.read('campaign', source_id='reference')['capture'] == first['capture']
+    assert seen == [f'https://raw.githubusercontent.com/jLabKAIST/flrl/{revision}/utils/utils_opt.py']
+
+
+def test_github_redirect_cannot_access_private_hosts(monkeypatch):
+    real_client = httpx.Client
+    seen = []
+    def handle(request):
+        seen.append(str(request.url))
+        return httpx.Response(302, headers={'location': 'https://localhost/private'})
+    monkeypatch.setattr(literature.httpx, "Client", lambda **kwargs: real_client(transport=httpx.MockTransport(handle), **kwargs))
+    with pytest.raises(EvidenceError, match='allowlist'):
+        literature.fetch_document('https://raw.githubusercontent.com/jLabKAIST/flrl/main/README.md')
+    assert len(seen) == 1

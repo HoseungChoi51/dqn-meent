@@ -94,7 +94,7 @@ class CampaignMemory:
                  "experiment_draft", "draft_launch", "reproduction_comparison", "study_execution", "study_activation", "confirmation_design",
                  "protocol_cell", "method_binding", "cell_launch", "execution_grant", "execution_grant_release",
                  "evaluator_requirement", "evaluator_binding", "discovery_session", "discovery_task",
-                 "discovery_artifact", "discovery_candidate", "methodology_family", "source_capture", "discovery_assessment", "discovery_assessment_decision")
+                 "discovery_artifact", "discovery_candidate", "discovery_handoff", "discovery_wrap_up", "methodology_family", "source_capture", "discovery_assessment", "discovery_assessment_decision")
         records = []
         for kind in kinds:
             values = [self.store.get(campaign_id, "campaign")] if kind == "campaign" else self.store.list(kind, campaign_id)
@@ -193,8 +193,11 @@ class CampaignMemory:
                 "reason": item.get("reason")}, ensure_ascii=False)
         if kind == "discovery_task":
             return json.dumps({"kind": kind, **{key: item.get(key) for key in
-                ("id", "session_id", "brief", "status", "wait_reason", "artifact_ids", "error")},
+                ("id", "session_id", "brief", "status", "wait_reason", "artifact_ids", "error", "handoff_id", "handoff_reason")},
                 "summary": item.get("result", {}).get("summary")}, ensure_ascii=False)
+        if kind in {"discovery_handoff", "discovery_wrap_up"}:
+            return json.dumps({"kind": kind, **{key: item.get(key) for key in
+                ("id", "session_id", "task_id", "reason", "summary", "scientific_complete", "artifact_ids", "next_action")}}, ensure_ascii=False)
         selected = {key: value for key, value in item.items() if key not in {
             "source", "algorithm_config", "context_snapshot", "checkpoint", "request", "provider_snapshot", "result"}}
         return json.dumps({"kind": kind, **selected}, ensure_ascii=False)

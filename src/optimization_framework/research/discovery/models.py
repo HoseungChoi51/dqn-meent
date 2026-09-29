@@ -76,7 +76,7 @@ class DiscoveryTaskBrief(Contract):
 
 class DiscoveryToolCall(Contract):
     key: str = Field(min_length=1, max_length=100, pattern=r"^[a-zA-Z0-9_-]+$")
-    tool: Literal["source.search", "source.ingest", "source.read", "evidence.read", "implementation.inspect", "experiment.inspect", "assessment.inspect", "assessment.prepare", "assessment.launch", "assessment.wait", "task.supersede"]
+    tool: Literal["source.search", "source.ingest", "source.read", "evidence.read", "context.read", "implementation.inspect", "experiment.inspect", "assessment.inspect", "assessment.prepare", "assessment.launch", "assessment.wait", "task.supersede"]
     arguments: dict[str, Any] = Field(default_factory=dict)
 
 
@@ -91,8 +91,8 @@ class DiscoveryArtifact(Contract):
 class DiscoveryResult(Contract):
     summary: str = Field(min_length=1, max_length=20000)
     rationale: str = Field(default="", max_length=12000)
-    disposition: Literal["continue", "complete", "wait", "blocked"] = Field(default="complete",
-        description="Status of THIS assigned task, not the whole campaign. Use complete when its work product or manager assignments are delivered. Use continue only when further work within this task is needed, normally tool results. The manager coordinates subsequent stages.")
+    disposition: Literal["continue", "complete", "wait", "blocked", "handoff"] = Field(default="complete",
+        description="Status of THIS assigned task, not the whole campaign. Use complete when its work product or manager assignments are delivered. Use continue only when further work within this task is needed, normally tool results. Use handoff to save partial findings, unresolved gaps and a narrow continuation when an allowance is reached. The manager coordinates subsequent stages.")
     tools: list[DiscoveryToolCall] = Field(default_factory=list, max_length=6)
     artifacts: list[DiscoveryArtifact] = Field(default_factory=list, max_length=8)
     proposed_tasks: list[DiscoveryTaskBrief] = Field(default_factory=list, max_length=12)

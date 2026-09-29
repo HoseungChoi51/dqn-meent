@@ -114,7 +114,18 @@ def extract(raw, mime, url):
         if parsed["truncated"]:
             limitations.append("Extraction stopped at 100 pages or 600,000 characters.")
         return blocks, "partial_text" if parsed["truncated"] else "full_text_captured", limitations, []
-    if mime not in {"text/html", "application/xhtml+xml", "", "text/plain"}:
+    if mime == "text/plain":
+        # Source code is text, not HTML: preserve indentation, comparisons and
+        # literal tags so a captured implementation can be inspected faithfully.
+        text = raw.decode("utf-8", errors="replace")
+        if not text.strip():
+            raise EvidenceError("Source contained no readable text")
+        truncated = len(text) > MAX_TEXT
+        limitations = ["Captured source text does not establish implementation correctness or scientific effectiveness."]
+        if truncated:
+            limitations.append("Extracted text reached the 600,000-character limit.")
+        return [{"text": text[:MAX_TEXT]}], "partial_text" if truncated else "full_text_captured", limitations, []
+    if mime not in {"text/html", "application/xhtml+xml", ""}:
         raise EvidenceError("Source did not return readable HTML, plain text or PDF")
     parser = ArticleText()
     parser.feed(raw.decode("utf-8", errors="replace"))
@@ -135,6 +146,12 @@ def extract(raw, mime, url):
 def source_urls(source):
     url = source["url"]
     parsed = urlparse(url)
+    if parsed.hostname == "github.com":
+        parts = parsed.path.strip("/").split("/")
+        if len(parts) >= 5 and parts[2] == "blob":
+            # Keep the exact supplied revision and path; never replace a pinned
+            # commit with the current default branch or parse GitHub's page UI.
+            return ["https://raw.githubusercontent.com/" + "/".join(parts[:2] + parts[3:])]
     if parsed.hostname == "arxiv.org" and parsed.path.startswith(("/abs/", "/pdf/", "/html/")):
         paper = parsed.path.split("/", 2)[2].removesuffix(".pdf")
         return ["https://arxiv.org/html/" + paper, "https://arxiv.org/pdf/" + paper]

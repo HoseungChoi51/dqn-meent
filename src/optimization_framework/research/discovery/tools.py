@@ -68,7 +68,7 @@ class SupersedeTask(Contract):
 
 
 ARGUMENTS = {"source.search": Search, "source.ingest": Ingest, "source.read": Read,
-             "evidence.read": Evidence, "experiment.inspect": Evidence, "assessment.inspect": Evidence, "implementation.inspect": Implementations,
+             "evidence.read": Evidence, "context.read": Evidence, "experiment.inspect": Evidence, "assessment.inspect": Evidence, "implementation.inspect": Implementations,
              "assessment.prepare": PrepareAssessment, "assessment.launch": AssessmentReference, "assessment.wait": AssessmentReference,
              "task.supersede": SupersedeTask}
 
@@ -84,11 +84,20 @@ class DiscoveryTools:
         self.reader = LiteratureReader(self.workspace)
 
     def prepare(self, task, step, calls):
+        from .allowance import ToolAllowanceReached
         session = self.store.get(task["session_id"], "discovery_session")
         existing = [row for row in self.store.list("discovery_tool", task["campaign_id"]) if row["task_id"] == task["id"]]
         identities = ["discovery_tool_" + content_hash([step["id"], call.key])[:32] for call in calls]
+        if set(identities).issubset({row["id"] for row in existing}):
+            return identities
+        phase = None
+        if task.get("attempt_id"):
+            attempt = self.store.get(task["attempt_id"], "discovery_attempt")
+            phase = attempt.get("context_snapshot", {}).get("discovery", {}).get("allocation", {}).get("phase")
+        if task.get("wrap_up_reason") or phase == "wrap_up" or step.get("usage", {}).get("calls", 0) >= session["policy"]["max_calls_per_task"]:
+            raise ToolAllowanceReached("The task has reached wrap-up; requested tools were deferred without execution. Save findings and remaining gaps for the manager.")
         if len({row["id"] for row in existing} | set(identities)) > session["policy"].get("max_tools_per_task", 32):
-            raise ValueError("This task's tool allowance is exhausted; ask the manager to reconsider its scope")
+            raise ToolAllowanceReached("This batch exceeds the remaining task tool allowance. The whole batch is deferred without execution; save findings and the smallest useful continuation.")
         for identity, call in zip(identities, calls):
             try:
                 self.store.get(identity, "discovery_tool")
@@ -104,7 +113,7 @@ class DiscoveryTools:
             self.store.put("discovery_tool", request, "discovery.tool_queued")
         return identities
 
-    def _receipt(self, request, *, result=None, error=None, elapsed=0, uncertain=False):
+    def _receipt(self, request, *, result=None, error=None, elapsed=0, uncertain=False, deferred=False):
         identity = "receipt_" + request["id"]
         try:
             return self.store.get(identity, "discovery_tool_receipt")
@@ -113,11 +122,11 @@ class DiscoveryTools:
         receipt = self.store.put_immutable("discovery_tool_receipt", {"id": identity,
             "campaign_id": request["campaign_id"], "session_id": request["session_id"], "task_id": request["task_id"],
             "request_id": request["id"], "tool": request["call"]["tool"], "created_at": now(),
-            "result": result, "error": error, "status": "failed" if error else "completed",
+            "result": result, "error": error, "status": "deferred" if deferred else "failed" if error else "completed",
             "uncertain": uncertain, "elapsed_seconds": elapsed}, "discovery.tool_completed")
         request.update(status=receipt["status"], receipt_id=identity, finished_at=receipt["created_at"])
         self.store.put("discovery_tool", request)
-        self.workspace.agent_log.record(request["campaign_id"], "tool.failed" if error else "tool.completed",
+        self.workspace.agent_log.record(request["campaign_id"], "tool.deferred" if deferred else "tool.failed" if error else "tool.completed",
             discovery_session_id=request["session_id"], agent_id=request["task_id"], task_id=request["task_id"],
             tool_call_id=request["id"], result_id=identity, event_key=identity,
             summary=error or request["call"]["tool"], payload=receipt)
@@ -153,7 +162,8 @@ class DiscoveryTools:
                     spent = sum(bool(row.get("dispatched_at")) for row in self.store.list("discovery_tool", session["campaign_id"])
                                 if row["session_id"] == session["id"] and row["call"]["tool"].startswith("source."))
                     if spent >= session["policy"].get("source_request_limit", 64):
-                        self._receipt(request, error="Session source-request allocation exhausted; retain the literature coverage gap")
+                        self._receipt(request, deferred=True, result={"executed": False,
+                            "reason": "Session source-request allocation exhausted; use saved evidence and retain the literature coverage gap."})
                         continue
                 request.update(status="running", dispatched_at=now(), attempt_id="attempt_" + request["id"])
                 self.store.put("discovery_tool", request, "discovery.tool_started")
@@ -211,13 +221,25 @@ class DiscoveryTools:
         if name == "source.read":
             self.controller._evidence(session, arguments["source_id"] or arguments["capture_id"])
             return self.reader.read(campaign_id, **arguments)
-        if name in {"evidence.read", "experiment.inspect", "assessment.inspect"}:
+        if name in {"evidence.read", "context.read", "experiment.inspect", "assessment.inspect"}:
             from .record_view import view_record
             task = self.store.get(request["task_id"], "discovery_task")
-            record = self.controller._evidence(session, arguments["record_id"], task=task)
             view = {"record_id": arguments["record_id"], "pointer": arguments["pointer"],
                     "offset": arguments["offset"], "limit": arguments["limit"], "tool": name,
                     "max_bytes": arguments["max_bytes"]}
+            if name == "context.read":
+                # This capability exposes only the caller's already authorized
+                # frozen snapshot, never a peer's run, provider config or trace.
+                if arguments["record_id"] != task.get("run_id"):
+                    raise ValueError("Context reads require this task's own saved research run")
+                run = self.store.get(arguments["record_id"], "research_run")
+                if (run.get("discovery_task_id") != task["id"] or
+                        run.get("discovery_session_id") != session["id"] or
+                        task["session_id"] != session["id"] or
+                        run["campaign_id"] != campaign_id or task["campaign_id"] != campaign_id):
+                    raise ValueError("Context reads must stay within this task, session and campaign")
+                return {"record": view_record(run["context_snapshot"], envelope_bytes=32, **view)}
+            record = self.controller._evidence(session, arguments["record_id"], task=task)
             if name == "assessment.inspect":
                 if self.store.get_entry(record["id"])["kind"] != "discovery_assessment":
                     raise ValueError("Assessment inspection requires an assessment record")
@@ -234,6 +256,7 @@ class DiscoveryTools:
             # subtrees. Leave room for its serialized bytes in the result cap.
             return {"record": view_record(record, envelope_bytes=32, **view)}
         catalog = self.workspace.implementations.catalog(refresh=True)
+        from optimization_framework.implementations.references import catalog as reference_catalog
         from optimization_framework.optimizers.registry import METHODS
         versions = catalog["versions"]
         if arguments["version_id"]:
@@ -241,7 +264,10 @@ class DiscoveryTools:
             if not versions:
                 raise ValueError("Implementation version is not available")
         return {"versions": [{key: row[key] for key in ("id", "name", "status", "spec", "validation_report") if key in row}
-                             for row in versions], "bundled_methods": METHODS, "connection_error": catalog["connection_error"]}
+                             for row in versions], "bundled_methods": METHODS, "connection_error": catalog["connection_error"],
+                "reference_sources": reference_catalog(self.store, campaign_id),
+                "reference_source_guidance": "Captured upstream code is not a validated campaign executable. "
+                    "Use evidence.read with its reference ID and /files pointers to inspect and reuse the existing source."}
 
     def _assessment_command(self, request, name, arguments):
         from optimization_framework.contracts.commands import Command

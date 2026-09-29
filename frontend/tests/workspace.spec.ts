@@ -348,13 +348,32 @@ test('archived ideas and unsuccessful agent runs expose actionable reasons', asy
   await expect(dialog.getByRole('button', { name: 'Ask agents for critique', exact: true })).toBeEnabled();
 });
 
+test('reference code is visible while campaign execution still requires integration', async ({ page }) => {
+  const reference = { id: 'reference-ppo', name: 'Authors’ Fourier PPO', repository_url: 'https://github.com/jLabKAIST/flrl',
+    revision: '7838e71313d71cee8e2db3b432f41f80b9106a95', entrypoints: ['main.py'],
+    integration_notes: 'Reuse the authors’ PPO loop; adapt evaluation accounting and validate checkpoints.' };
+  const { writes } = await mockWorkspace(page, { ...base,
+    hypotheses: [{ ...feedbackIdea, algorithm: 'flrl_ppo', implementation_readiness: { state: 'reference_available',
+      runnable: false, reason: 'Reference code is available. Campaign integration is required.', references: [reference] } }],
+  });
+  const dossier = await openFeedbackIdea(page);
+  await expect(dossier.getByText('Reference code available · needs integration', { exact: true })).toBeVisible();
+  await expect(dossier.getByRole('link', { name: 'Authors’ repository' })).toHaveAttribute('href', reference.repository_url);
+  await expect(dossier).toContainText('7838e71313d7');
+  await expect(dossier).toContainText('Entry points: main.py');
+  await expect(dossier.getByRole('link', { name: 'Download captured reference source' })).toHaveAttribute('href', '/api/v1/implementation-references/reference-ppo');
+  await dossier.getByRole('button', { name: 'Design experiment', exact: true }).click();
+  await expect(page.getByRole('dialog').getByRole('button', { name: 'Launch experiment', exact: true })).toBeDisabled();
+  expect(writes).toHaveLength(0);
+});
+
 test('missing implementation permits design and commissions separate bounded work', async ({ page }) => {
   const { writes } = await mockWorkspace(page, { ...base,
     campaign: { ...campaign, implementation_compute_budget_seconds: 180 },
     hypotheses: [{ ...feedbackIdea, algorithm: 'fourier', implementation_readiness: { state: 'missing', runnable: false, reason: 'This proposal has no executable implementation.' } }],
   });
   const dossier = await openFeedbackIdea(page);
-  await expect(dossier.getByText('Implementation missing', { exact: true })).toBeVisible();
+  await expect(dossier.getByText('No campaign implementation', { exact: true })).toBeVisible();
   await expect(dossier.getByRole('button', { name: 'Design experiment', exact: true })).toBeEnabled();
   await dossier.getByRole('button', { name: 'Design experiment', exact: true }).click();
   await expect(page.getByRole('dialog').getByRole('button', { name: 'Save draft', exact: true })).toBeEnabled();

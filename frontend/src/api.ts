@@ -3,7 +3,7 @@ import type { ResearchProgressState } from './researchProgress';
 export type Json = Record<string, any>;
 export type Task = { id: string; name: string; physics: Json; split: string; problem_id?: string; configuration?: Json; fidelity?: Json; problem?: Json;
   evaluator_manifest?: Json; evaluator_requirement_id?: string; evaluator_readiness?: Json; evaluator_version_id?: string };
-export type Algorithm = { id: string; name: string; description: string; parameters?: Json; representations?: string[]; constraints?: boolean; execution_capabilities?: Json };
+export type Algorithm = { id: string; name: string; description: string; parameters?: Json; representations?: string[]; problem_ids?: string[]; constraints?: boolean; execution_capabilities?: Json };
 export type Trial = {
   id: string; campaign_id: string; task_id: string; hypothesis_id?: string; algorithm: string;
   status: string; seed: number; max_steps: number; wall_seconds: number; priority: number; control_revision?: number;
@@ -63,6 +63,7 @@ export type State = {
   trials: Trial[]; decisions: Decision[]; messages: Json[]; events: Json[]; algorithms: Algorithm[];
   settings: { llm_configured: boolean; model?: string; [key: string]: any }; research_runs: Json[];
   research_progress?: ResearchProgressState;
+  agent_runtime?: Json;
   [key: string]: any;
 };
 

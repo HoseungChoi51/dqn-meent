@@ -4,10 +4,94 @@ from types import SimpleNamespace
 
 from fastapi.testclient import TestClient
 
-from test_framework_discovery import setup, start
+from test_framework_discovery import Adapter, command, setup, settle, start
+from optimization_framework.research.discovery.models import DiscoveryResult
 from optimization_framework.api.app import create_app
 from optimization_framework.contracts.requests import ResearchInput
 from optimization_framework.research.progress import view
+
+
+def waiting_for_direction(setup):
+    workspace, campaign = setup
+    class Asks(Adapter):
+        def result(self, role, context):
+            if role == "campaign_manager":
+                return DiscoveryResult(summary="The implementation handoff is ready; a choice is needed.",
+                    session_action="request_researcher_input", questions_for_manager=[
+                        "Does H12 mean mask-aware covariance adaptation?", "What implementation allocation do you want?"])
+            return super().result(role, context)
+    workspace.discovery.adapter_factory = Asks
+    session, _ = start(workspace, campaign)
+    settle(workspace, campaign)
+    manager = next(row for row in workspace.discovery.tasks(session) if row["brief"]["role"] == "campaign_manager")
+    return workspace, campaign, workspace.store.get(session["id"]), manager
+
+
+def test_waiting_progress_exposes_current_manager_request_without_archive_or_mutation(setup):
+    workspace, campaign, session, manager = waiting_for_direction(setup)
+    # A newer-looking stale manager and a specialist's questions are not the
+    # researcher request that put this session into its waiting state.
+    for identity, role, status in (("stale_manager", "campaign_manager", "superseded"),
+                                   ("specialist_question", "methodology_specialist", "completed")):
+        workspace.store.put("discovery_task", {**manager, "id": identity, "brief": {**manager["brief"], "role": role},
+            "status": status, "finished_at": "2099-01-01T00:00:00+00:00",
+            "result": {"summary": "Wrong request", "questions_for_manager": ["Do not show this question"]}})
+    events = workspace.store.events(campaign["id"])
+    progress = view(workspace, campaign["id"])
+    request = progress["direction_request"]
+    assert request["id"] == manager["applied_step_id"] and request["task_id"] == manager["id"]
+    assert request["session_id"] == session["id"] and request["kind"] == "questions"
+    assert request["summary"] == manager["result"]["summary"]
+    assert request["questions"] == manager["result"]["questions_for_manager"]
+    assert "context_snapshot" not in json.dumps(request)
+    assert workspace.store.events(campaign["id"]) == events
+
+
+def test_reply_is_durable_hides_answered_prompt_and_wakes_manager_without_changing_allocations(setup):
+    workspace, campaign, session, manager = waiting_for_direction(setup)
+    request = view(workspace, campaign["id"])["direction_request"]
+    workspace.shutdown_event.set()
+    calls_before = len(Adapter.calls)
+    message = f"Reply to campaign manager request {request['id']} (discovery session {session['id']}):\n\nYes, that is H12. Explain the required allocation first."
+    reply = command(workspace, campaign, "research.start", {"mode": "discuss", "message": message}, "reply_to_manager")
+    receipt = workspace.commands.execute(reply)
+    assert workspace.commands.execute(reply) == receipt
+    saved = workspace.store.get(receipt["outcome"]["manager_command_id"])
+    assert saved["request"]["message"] == message
+    progress = view(workspace, campaign["id"])
+    assert progress["direction_request"] is None and progress["status"] == "queued"
+    with workspace.lock, workspace.store.transaction():
+        workspace.discovery._admit_guidance(session)
+    new_task = next(task for task in workspace.discovery.tasks(session) if task.get("manager_command_id") == saved["id"])
+    assert new_task["brief"]["objective"] == message and new_task["status"] == "queued"
+    assert workspace.store.get(session["id"])["status"] == "running"
+    assert workspace.store.get(session["id"])["policy"] == session["policy"]
+    assert len(Adapter.calls) == calls_before
+
+
+def test_waiting_without_a_question_shows_latest_summary_without_old_questions(setup):
+    workspace, campaign, session, manager = waiting_for_direction(setup)
+    newer = {**manager, "id": "new_manager", "applied_step_id": "new_manager_step_0", "finished_at": "2099-01-01T00:00:00+00:00",
+        "result": {"summary": "Assigned work is saved; choose the next focus.", "questions_for_manager": [], "session_action": "continue"}}
+    workspace.store.put("discovery_task", newer)
+    request = view(workspace, campaign["id"])["direction_request"]
+    assert request["kind"] == "open_direction" and not request["questions"]
+    assert request["summary"] == newer["result"]["summary"]
+    for status in ("running", "paused", "stopped", "completed"):
+        session["status"] = status
+        workspace.store.put("discovery_session", session)
+        assert view(workspace, campaign["id"])["direction_request"] is None
+
+
+def test_allocation_wrap_up_replaces_old_manager_questions(setup):
+    workspace, campaign, session, manager = waiting_for_direction(setup)
+    workspace.store.put_immutable("discovery_wrap_up", {"id": "current_wrap_up", "campaign_id": campaign["id"],
+        "session_id": session["id"], "summary": "Partial findings saved at the allocation ceiling.", "created_at": manager["finished_at"]})
+    session["wrap_up_id"] = "current_wrap_up"
+    workspace.store.put("discovery_session", session)
+    request = view(workspace, campaign["id"])["direction_request"]
+    assert request["id"] == "current_wrap_up" and request["kind"] == "allocation" and not request["questions"]
+    assert "allocation ceiling" in request["summary"]
 
 
 def latest_request(workspace, campaign, session, *, task_status="queued"):
@@ -43,7 +127,7 @@ def test_paused_submission_is_visible_without_dispatch_or_projection_side_effect
     assert progress["status"] == "paused" and progress["can_resume"] and not progress["active"]
     assert progress["request"]["id"] == result["id"]
     assert progress["task_counts"] == {"total": 1, "queued": 1, "running": 0, "waiting": 0, "completed": 0,
-                                      "failed": 0, "blocked": 0, "cancelled": 0, "superseded": 0}
+                                      "failed": 0, "blocked": 0, "cancelled": 0, "superseded": 0, "handed_off": 0}
     assert "No model call" in progress["agents"][0]["activity"]
     assert workspace.store.list("discovery_task", campaign["id"]) == before
     assert not workspace.store.list("research_run", campaign["id"])

@@ -276,7 +276,7 @@ def test_manager_indexes_indirect_detail_but_never_drops_explicit_evidence(setup
     assert compiled["discovery"]["evidence"][0]["id"] == trial["id"]
     assert "content_omitted" in compiled["discovery"]["evidence"][0]
     task["brief"]["evidence_ids"] = [trial["id"]]
-    with pytest.raises(ValueError, match="bounded allowance"):
+    with pytest.raises(ValueError, match="too much saved context.*working limit 170 KiB"):
         workspace.discovery._step_context(task, {"context_snapshot": context})
 
 
@@ -349,7 +349,8 @@ def test_concurrent_tasks_share_session_call_limit_and_preserve_synthesis_reserv
     assert any(row["role"] == "campaign_manager" for row in Adapter.calls)
     runs = workspace.store.list("research_run", campaign["id"])
     assert sum(row["usage"].get("calls", 0) for row in runs) == len(Adapter.calls)
-    assert any("allocation" in task.get("error", "") for task in workspace.discovery.tasks(session))
+    assert any(task["status"] == "handed_off" and "allocation" in task["handoff_reason"] for task in workspace.discovery.tasks(session))
+    assert not any(task["status"] == "failed" for task in workspace.discovery.tasks(session))
 
 
 def test_user_steering_goes_through_manager_and_supersedes_old_work(setup):

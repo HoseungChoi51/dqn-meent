@@ -1,0 +1,10 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+tailnet_ip="$(tailscale ip -4)"
+if [[ -z "$tailnet_ip" || "$tailnet_ip" == *$'\n'* ]]; then
+  echo "Expected one Tailscale IPv4 address" >&2
+  exit 1
+fi
+
+exec /usr/bin/socat "TCP-LISTEN:8765,bind=$tailnet_ip,reuseaddr,fork" TCP:127.0.0.1:8765

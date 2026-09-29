@@ -11,12 +11,23 @@ export function readiness(h: Hypothesis): Json {
 
 export function ImplementationBadge({ hypothesis }: { hypothesis: Hypothesis }) {
   const status = readiness(hypothesis);
-  const labels: Record<string, string> = { missing: 'Implementation missing', ready: 'Implementation available',
+  const labels: Record<string, string> = { missing: 'No campaign implementation', ready: 'Implementation available',
+    reference_available: 'Reference code available · needs integration',
     validation_required: 'Implementation validation required', unavailable: 'Implementation unavailable',
     incompatible: 'Implementation incompatible', queued: 'Implementation queued', dispatching: 'Connecting to implementation service',
     building: 'Implementing', validating: 'Validating implementation', reviewing: 'Reviewing implementation',
     repairing: 'Repairing implementation', blocked: 'Implementation blocked', interrupted: 'Implementation interrupted' };
   return <Badge tone={status.runnable ? 'green' : 'amber'}>{labels[status.state] || status.state}</Badge>;
+}
+
+export function ReferenceSources({ references = [] }: { references?: Json[] }) {
+  return <>{references.map(reference => <article className="callout" key={reference.id}>
+    <h4>{reference.name}</h4>
+    <p><a href={reference.repository_url} target="_blank" rel="noreferrer">Authors’ repository</a> · Commit <code>{reference.revision.slice(0, 12)}</code></p>
+    <p>Entry points: {reference.entrypoints.join(', ')}</p>
+    <TextContent text={reference.integration_notes} />
+    <a href={`/api/v1/implementation-references/${encodeURIComponent(reference.id)}`} download>Download captured reference source</a>
+  </article>)}</>;
 }
 
 export function ImplementationRequest({ hypothesis, state, onClose, onDone }: { hypothesis: Hypothesis; state: State; onClose: () => void; onDone: () => void }) {
@@ -27,7 +38,9 @@ export function ImplementationRequest({ hypothesis, state, onClose, onDone }: { 
   const dimensions = domain?.dimensions || task?.physics?.n_cells || 8;
   const suggestedCapabilities: string[] = task?.problem?.capabilities || (task?.evaluator_manifest
     ? [domain.representation, 'scalar_objective'] : ['binary_forward']);
-  const [mechanism, setMechanism] = useState(hypothesis.mechanism);
+  const references = readiness(hypothesis).references || [];
+  const [mechanism, setMechanism] = useState(hypothesis.mechanism + references.map((reference: Json) =>
+    `\n\nReuse the captured reference ${reference.id} from ${reference.repository_url} at ${reference.revision}. ${reference.integration_notes}`).join(''));
   const [criteria, setCriteria] = useState('Implements the declared mechanism\nReproduces seeded proposals and restores the complete optimizer state');
   const [dependencies, setDependencies] = useState('{}');
   const [capabilities, setCapabilities] = useState(suggestedCapabilities.join(', '));
@@ -59,6 +72,8 @@ export function ImplementationRequest({ hypothesis, state, onClose, onDone }: { 
     e.preventDefault(); setBusy(true); setError('');
     try {
       if (!task || !evaluatorReady) throw new Error('Select a problem with an available evaluator before commissioning optimizer correctness checks.');
+      const referenceRecords = await Promise.all(references.map((reference: Json) =>
+        api(`/api/v1/implementation-references/${encodeURIComponent(reference.id)}`)));
       const result = await command('implementation.commission', {
         hypothesis_id: hypothesis.id, compute_seconds: Number(compute), max_calls: Number(calls), api_budget_usd: Number(apiCap),
         spec: { name: hypothesis.title, mechanism, acceptance_criteria: criteria.split('\n').map(s => s.trim()).filter(Boolean),
@@ -68,7 +83,8 @@ export function ImplementationRequest({ hypothesis, state, onClose, onDone }: { 
           ...(task.evaluator_version_id ? { kind: 'optimizer', evaluator_version_id: task.evaluator_version_id } : {}),
           dependencies: JSON.parse(dependencies), capabilities: capabilities.split(',').map(s => s.trim()).filter(Boolean),
           parameters: JSON.parse(parameters), parameter_schema: JSON.parse(schema),
-          provenance: [{ hypothesis_id: hypothesis.id, campaign_id: state.campaign!.id }] },
+          provenance: [{ hypothesis_id: hypothesis.id, campaign_id: state.campaign!.id },
+            ...referenceRecords.map(reference => ({ kind: 'reference_source', ...reference }))] },
         package: sourcePackage.trim() ? JSON.parse(sourcePackage) : null,
       });
       if (result?.error) setError(result.error);
@@ -93,8 +109,8 @@ export function ImplementationRequest({ hypothesis, state, onClose, onDone }: { 
         <Field wide label="Algorithm specification"><textarea required rows={5} value={mechanism} onChange={e => setMechanism(e.target.value)} /></Field>
         <Field wide label="Acceptance criteria" hint="One behavioral requirement per line. These stay fixed throughout repairs."><textarea required rows={4} value={criteria} onChange={e => setCriteria(e.target.value)} /></Field>
         <Field label="Required evaluator capabilities"><input value={capabilities} onChange={e => setCapabilities(e.target.value)} /></Field>
-        <Field label="Minimum candidate dimensions"><input type="number" required min="1" max="1024" value={minimum} onChange={e => setMinimum(e.target.value)} /></Field>
-        <Field label="Maximum candidate dimensions"><input type="number" required min={minimum} max="1024" value={maximum} onChange={e => setMaximum(e.target.value)} /></Field>
+        <Field label="Minimum candidate dimensions"><input type="number" required min="1" max="1000000" value={minimum} onChange={e => setMinimum(e.target.value)} /></Field>
+        <Field label="Maximum candidate dimensions"><input type="number" required min={minimum} max="1000000" value={maximum} onChange={e => setMaximum(e.target.value)} /></Field>
         <Field label="Supports declared constraints"><input type="checkbox" checked={constraints} onChange={e => setConstraints(e.target.checked)} /></Field>
         <Field label="Pinned Python dependencies (JSON)" hint={'For example {"numpy":"2.5.3"}'}><textarea value={dependencies} onChange={e => setDependencies(e.target.value)} spellCheck={false} /></Field>
         <Field label="Default parameters (JSON)"><textarea value={parameters} onChange={e => setParameters(e.target.value)} spellCheck={false} /></Field>
@@ -197,6 +213,7 @@ export function ImplementationLibrary({ state, refresh, discuss }: { state: Stat
   const [search, setSearch] = useState('');
   const matches = (text: string) => text.toLowerCase().includes(search.trim().toLowerCase());
   const versions = (catalog.versions || []).filter((v: Json) => matches(`${v.name} ${v.id} ${v.spec.mechanism}`));
+  const references = (catalog.references || []).filter((r: Json) => matches(`${r.name} ${r.algorithm} ${r.integration_notes}`));
   const bundled = state.algorithms.filter(a => matches(`${a.name} ${a.id} ${a.description}`));
   const command = useCommand(state.campaign);
   const tasks = state.tasks.filter(task => task.evaluator_requirement_id);
@@ -223,7 +240,8 @@ export function ImplementationLibrary({ state, refresh, discuss }: { state: Stat
       <button className="button secondary" onClick={() => void reload()}>Refresh library</button></div>
     <ErrorNotice text={error} />
     <Field label="Search installed implementations"><input aria-label="Search installed implementations" value={search} onChange={e => setSearch(e.target.value)} placeholder="Name, mechanism, or implementation ID" /></Field>
-    <p className="help-text">Search covers bundled optimizers and this service's published packages. External source can be imported through Request implementation and passes the same correctness checks.</p>
+    <p className="help-text">Search covers bundled optimizers, captured reference code, and published packages. Reference code needs campaign integration and correctness checks before trials.</p>
+    {!!references.length && <Panel title="Reference implementations"><ReferenceSources references={references} /></Panel>}
     {!!bundled.length && <Panel title="Bundled optimizers"><div className="run-list">{bundled.map(method => <article key={method.id}><h3>{method.name}</h3><p>{method.description}</p><p className="help-text">Identifier: {method.id}. Check that the proposal's mechanism and parameters match before selecting it in a revised proposal.</p><details><summary>Supported parameters</summary><pre>{JSON.stringify((method as Json).parameter_schema || method.parameters || {}, null, 2)}</pre></details></article>)}</div></Panel>}
     {catalog.connection_error && <div className="callout amber"><p>{catalog.connection_error}</p><button className="text-button" onClick={() => discuss(catalog.connection_error)}>Discuss with campaign manager</button></div>}
     <Panel title="Implementation versions">

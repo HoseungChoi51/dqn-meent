@@ -8,8 +8,8 @@ from __future__ import annotations
 import json
 
 
-TASK_STATUSES = ("queued", "running", "waiting", "completed", "failed", "blocked", "cancelled", "superseded")
-TERMINAL = {"completed", "failed", "blocked", "cancelled", "superseded", "stopped", "interrupted"}
+TASK_STATUSES = ("queued", "running", "waiting", "completed", "failed", "blocked", "cancelled", "superseded", "handed_off")
+TERMINAL = {"completed", "failed", "blocked", "cancelled", "superseded", "stopped", "interrupted", "handed_off"}
 SESSION_TERMINAL = {"completed", "stopped", "exhausted"}
 PROVIDER_EVENTS = ("provider.request", "provider.response", "provider.error", "provider.reserved",
                    "provider.cancelled_before_send", "runtime.liveness")
@@ -23,6 +23,41 @@ def _records(store, kind, campaign_id, fields):
         rows = db.execute(f"SELECT json_object({columns}) FROM records WHERE kind=? AND campaign_id=? ORDER BY rowid",
                           (kind, campaign_id)).fetchall()
     return [json.loads(row[0]) for row in rows]
+
+
+def _direction_request(store, session):
+    """Expose the current manager's ordinary request, never a prompt archive.
+
+    Waiting can also mean the agenda ended without a question. Preserve that
+    distinction instead of making the researcher hunt for an invented request.
+    """
+    if not session or session["status"] != "waiting_for_direction":
+        return None
+    if session.get("wrap_up_id"):
+        record = store.get(session["wrap_up_id"], "discovery_wrap_up")
+        return {"id": record["id"], "session_id": session["id"], "kind": "allocation",
+            "summary": record["summary"], "questions": [], "created_at": record["created_at"]}
+    with store.connection() as db:
+        row = db.execute("""
+            SELECT id, json_extract(data,'$.applied_step_id') AS step_id,
+                   json_extract(data,'$.result.summary') AS summary,
+                   json_extract(data,'$.result.questions_for_manager') AS questions,
+                   json_extract(data,'$.finished_at') AS finished_at
+            FROM records WHERE kind='discovery_task' AND campaign_id=?
+                AND json_extract(data,'$.session_id')=?
+                AND json_extract(data,'$.brief.role')='campaign_manager'
+                AND json_extract(data,'$.status')='completed'
+                AND json_extract(data,'$.guidance_revision')=?
+                AND json_extract(data,'$.result.summary') IS NOT NULL
+            ORDER BY json_extract(data,'$.finished_at') DESC, rowid DESC LIMIT 1
+        """, (session["campaign_id"], session["id"], session["guidance_revision"])).fetchone()
+    if not row:
+        return {"id": session["id"], "session_id": session["id"], "kind": "open_direction",
+            "summary": "No current manager question is recorded. Send the direction you want the manager to take next.", "questions": []}
+    questions = json.loads(row["questions"]) if row["questions"] else []
+    return {"id": row["step_id"] or row["id"], "session_id": session["id"], "task_id": row["id"],
+        "kind": "questions" if questions else "open_direction", "summary": row["summary"],
+        "questions": questions, "created_at": row["finished_at"]}
 
 
 def _latest_provider_events(store, campaign_id, task_ids, event_types=PROVIDER_EVENTS):
@@ -141,6 +176,7 @@ def _agent(workspace, campaign_id, session, task, run, attempt, event):
             activity += " Completed work and the failed-call record are retained."
     else:
         activity = {"completed": "Work product saved.", "cancelled": "Task cancelled.",
+                    "handed_off": "Partial findings and remaining work saved for the campaign manager.",
                     "superseded": "Task superseded by newer guidance."}.get(status, "Task is no longer active.")
     return {"task_id": task["id"], "role": role, "stage": brief.get("stage") or "manage", "status": status,
             "model": config.get("model"), "reasoning_effort": config.get("reasoning_effort"),
@@ -240,6 +276,8 @@ def _decision_review_view(workspace, campaign_id, request, parent, runs):
 
 
 def view(workspace, campaign_id):
+    if getattr(workspace, "pi", None) and workspace.pi.owns(campaign_id):
+        return workspace.pi.progress(campaign_id)
     """Project durable state and local worker liveness without changing either."""
     store = workspace.store
     store.get(campaign_id, "campaign")
@@ -251,7 +289,7 @@ def view(workspace, campaign_id):
         ("id", "status", "request", "created_at", "finished_at", "current_role", "manager_command_id", "error", "usage.pending_reservation", "decision_review"))
     parent = next((run for run in runs if request and run["id"] == request.get("research_run_id") and run.get("decision_review")), None)
     sessions = _records(store, "discovery_session", campaign_id,
-        ("id", "status", "control_revision", "created_at", "updated_at", "policy"))
+        ("id", "campaign_id", "status", "control_revision", "guidance_revision", "created_at", "updated_at", "policy", "wrap_up_id"))
     session = next((row for row in reversed(sessions) if row["status"] not in SESSION_TERMINAL), sessions[-1] if sessions else None)
     tasks = _records(store, "discovery_task", campaign_id,
         ("id", "session_id", "brief", "status", "created_at", "updated_at", "finished_at", "run_id", "attempt_id",
@@ -319,12 +357,15 @@ def view(workspace, campaign_id):
     elif counts["waiting"]:
         status, headline = "waiting", "Research is waiting"
         message = "Agents are waiting for tool results or a campaign manager review; no model call is running for this request."
+    elif session_status == "waiting_for_direction" and session.get("wrap_up_id"):
+        status, headline = "waiting", "Discovery wrapped up at its allocation"
+        message = "Partial findings and continuation notes are saved. Review them with the campaign manager; further research needs an allocation change."
     elif counts["failed"] or counts["blocked"] or (request and request["status"] in {"failed", "blocked"}):
         status, headline = "failed" if counts["failed"] or (request and request["status"] == "failed") else "blocked", "Research needs manager attention"
         message = "Work for this request encountered an error or a blocked task. Completed evidence is retained."
     elif session_status == "waiting_for_direction":
         status, headline = "waiting", "Campaign manager is waiting for your direction"
-        message = "The saved work is ready for review. Send guidance through the campaign manager to continue."
+        message = "Read the manager's request below and send your reply here."
     elif request and request["status"] in {"superseded", "cancelled", "stopped", "interrupted"}:
         status, headline = "waiting", "Research request is no longer active"
         message = "This request was cancelled, interrupted or superseded. Its saved work remains available for review."
@@ -342,7 +383,9 @@ def view(workspace, campaign_id):
             and not (runs.get(task.get("run_id")) or {}).get("usage.pending_reservation") for task in tasks)]
     stamps = [row.get("last_activity_at") for row in agents]
     stamps.extend([(session or {}).get("updated_at"), (request or {}).get("created_at")])
+    direction_request = _direction_request(store, session) if not alive and not pending_request else None
     return {"status": status, "headline": headline, "message": message, "active": active,
+            "direction_request": direction_request,
             "session": {key: session.get(key) for key in ("id", "status", "control_revision")} if session else None,
             "request": {"id": request["id"], "message": (request.get("request") or {}).get("message", "")[:1500],
                         "created_at": request.get("created_at"), "status": request["status"]} if request else None,

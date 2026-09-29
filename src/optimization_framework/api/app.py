@@ -111,6 +111,8 @@ def create_app(directory=None, max_workers=2, start_workers=True, implementation
     app.state.manager = coordinator
     from optimization_framework.api.agent_log import install as install_agent_log
     install_agent_log(app, workspace)
+    from optimization_framework.agents.api import install as install_pi
+    install_pi(app, workspace)
 
     @app.get("/api/campaigns/{campaign_id}/discovery")
     def discovery(campaign_id: str):
@@ -369,6 +371,10 @@ def create_app(directory=None, max_workers=2, start_workers=True, implementation
         # appears on the next refresh instead of being skipped by a stale view.
         recent_events = workspace.store.recent_events(current) if current else []
         provider = workspace.models.config(current, "campaign_manager") if current else provider_status()
+        if current and workspace.pi.owns(current):
+            connection = workspace.pi.configuration(current).get("provider", {})
+            provider = {**provider, **connection, "provider": "pi", "model": "gpt-6-astra",
+                "billing_mode": "subscription", "label": "Pi / OpenAI Codex", "enabled": provider.get("enabled", True)}
         response = {"workspace_id": workspace_id, "campaigns": campaigns, "campaign": campaign, "algorithms": ALGORITHMS,
                     "settings": {"llm_configured": provider["configured"], "model": provider["model"],
                                  "provider": provider, "max_workers": workspace.max_workers}}
@@ -394,6 +400,7 @@ def create_app(directory=None, max_workers=2, start_workers=True, implementation
         response["research_runs"] = [coordinator.public_run(r) for r in workspace.store.list("research_run", current)] if current else []
         from optimization_framework.research.progress import view as progress_view
         response["research_progress"] = progress_view(workspace, current) if current else None
+        response["agent_runtime"] = workspace.pi.view(current) if current else None
         response["source_requests"] = [{key: effect[key] for key in
             ("id", "kind", "status", "query", "identifier", "error", "receipt_id", "created_at") if key in effect}
             for effect in workspace.store.list("outbox", current) if effect["kind"] in {"literature_search", "source_ingest"}] if current else []
@@ -423,14 +430,17 @@ def create_app(directory=None, max_workers=2, start_workers=True, implementation
             from optimization_framework.implementations.bridge import public_grant
             response["implementation_jobs"] = [public_grant(g) for g in workspace.store.list("implementation_grant", current)]
             response["implementation_library"] = workspace.implementations.catalog()
+            from optimization_framework.implementations.references import catalog as reference_catalog
+            response["implementation_library"]["references"] = reference_catalog(workspace.store, current)
             response["budget"] = {"allocated_seconds": workspace.allocated_seconds(current),
-                "spent_seconds": sum(t.get("execution_seconds", 0) for t in response["trials"]),
+                "spent_seconds": workspace.resources.assessment(current)["actual_seconds"],
                 "cap_seconds": campaign["compute_budget_seconds"],
                 "llm_spent_usd": sum(api_spend(r.get("usage")) for r in response["research_runs"]) + sum(api_spend(g.get("usage")) for g in response["implementation_jobs"]),
                 "implementation_api_committed_usd": workspace.implementations.api_committed(current),
                 "implementation_compute_committed_seconds": workspace.implementations.compute_committed(current),
                 "implementation_compute_cap_seconds": campaign.get("implementation_compute_budget_seconds", 0),
-                "subscription_calls": sum((r.get("usage") or {}).get("subscription_calls", 0) for r in response["research_runs"] + response["implementation_jobs"]),
+                "subscription_calls": sum((r.get("usage") or {}).get("subscription_calls", 0) for r in response["research_runs"] + response["implementation_jobs"]
+                    if not r.get("request", {}).get("agent_parent_id")) + sum(a.get("usage", {}).get("calls", 0) for a in workspace.store.list("agent_session", current)),
                 "llm_cap_usd": campaign["llm_budget_usd"]}
         return response
 
@@ -558,9 +568,15 @@ def create_app(directory=None, max_workers=2, start_workers=True, implementation
         catalog = workspace.implementations.catalog(refresh=True)
         if campaign_id:
             from optimization_framework.implementations.reuse import assess
+            from optimization_framework.implementations.references import catalog as reference_catalog
+            catalog["references"] = reference_catalog(workspace.store, campaign_id)
             catalog["candidates"] = {version["id"]: assess(workspace.implementations, campaign_id, version,
                 hypothesis_id=hypothesis_id, task_id=task_id) for version in catalog["versions"]}
         return catalog
+
+    @app.get("/api/v1/implementation-references/{reference_id}")
+    def implementation_reference(reference_id: str):
+        return workspace.store.get(reference_id, "implementation_reference")
 
     @app.get("/api/v1/implementations/{version_id}/runtime")
     def implementation_runtime(version_id: str, campaign_id: str):

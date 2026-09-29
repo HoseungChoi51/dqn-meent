@@ -1,14 +1,22 @@
 import { useEffect, useState } from 'react';
 import { errorText, when } from './api';
+import type { FormEvent } from 'react';
 import type { Json, State } from './api';
 import { useCommand } from './commands';
-import { Badge, ErrorNotice, Icon } from './ui';
+import { Badge, ErrorNotice, Field, Icon } from './ui';
+import { PiAgentPanel } from './piAgents';
+
+type DirectionRequest = {
+  id: string; session_id: string; task_id?: string; created_at?: string;
+  kind: 'questions' | 'open_direction' | 'allocation'; summary: string; questions: string[];
+};
 
 export type ResearchProgressState = {
   status: 'idle' | 'queued' | 'running' | 'paused' | 'waiting' | 'blocked' | 'completed' | 'failed';
   headline: string; message: string; active: boolean; can_resume?: boolean; updated_at?: string | null;
   session?: { id: string; status: string; control_revision: number } | null;
   request?: { id: string; message: string; created_at?: string; status: string } | null;
+  direction_request?: DirectionRequest | null;
   retryable_task_ids?: string[];
   task_counts: Record<string, number>;
   agents: { task_id: string; role: string; stage: string; status: string; model?: string | null;
@@ -41,6 +49,13 @@ export function researchRequestNotice(state: State, outcome?: Json): string {
 }
 
 export function ResearchProgress({ state, refresh, connectionError }: {
+  state: State; refresh: () => Promise<void>; connectionError?: string;
+}) {
+  if (state.agent_runtime?.configuration?.enabled) return <PiAgentPanel key={state.campaign?.id} state={state} refresh={refresh} connectionError={connectionError} />;
+  return <LegacyResearchProgress state={state} refresh={refresh} connectionError={connectionError} />;
+}
+
+function LegacyResearchProgress({ state, refresh, connectionError }: {
   state: State; refresh: () => Promise<void>; connectionError?: string;
 }) {
   const progress: ResearchProgressState | undefined = state.research_progress;
@@ -107,11 +122,13 @@ export function ResearchProgress({ state, refresh, connectionError }: {
       </div>
     </div>
     <p className="research-progress-message">{progress.message}</p>
+    {progress.direction_request && <ManagerDirection key={`${state.campaign.id}:${progress.direction_request.id}`}
+      request={progress.direction_request} state={state} refresh={refresh} onSaved={setNotice} />}
     {showRetry && progress.session?.status === 'paused' && <p>Retry queues another attempt. Discovery stays paused until you resume.</p>}
     {notice && <p role="status">{notice}</p>}
     {connectionError && <p className="research-progress-stale">Workspace connection interrupted. Showing the last received agent status.</p>}
     {progress.request && <details className="research-progress-request">
-      <summary><span><strong>Latest request:</strong> {shortened(requestLines[0] || progress.request.message, 155)}{direction && <small>{shortened(direction, 155)}</small>}</span></summary>
+      <summary><span><strong>Your latest request:</strong> {shortened(requestLines[0] || progress.request.message, 155)}{direction && <small>{shortened(direction, 155)}</small>}</span></summary>
       <p className="research-progress-prompt">{progress.request.message}</p>
       <small>Requested {when(progress.request.created_at)} · {words(progress.request.status)}</small>
     </details>}
@@ -126,11 +143,50 @@ export function ResearchProgress({ state, refresh, connectionError }: {
       </div>
     </article>)}</div>}
     <div className="research-progress-footer">
-      {counts.total > 0 && <span>{counts.completed || 0} completed · {counts.running || 0} running · {counts.queued || 0} queued{counts.waiting ? ` · ${counts.waiting} waiting` : ''}{counts.blocked ? ` · ${counts.blocked} blocked` : ''}{counts.failed ? ` · ${counts.failed} failed` : ''} <span className="research-progress-scope">{progress.request ? 'tasks for this request' : 'tasks in this discovery session'}</span></span>}
+      {counts.total > 0 && <span>{counts.completed || 0} completed · {counts.running || 0} running · {counts.queued || 0} queued{counts.waiting ? ` · ${counts.waiting} waiting` : ''}{counts.handed_off ? ` · ${counts.handed_off} handed off` : ''}{counts.blocked ? ` · ${counts.blocked} blocked` : ''}{counts.failed ? ` · ${counts.failed} failed` : ''} <span className="research-progress-scope">{progress.request ? 'tasks for this request' : 'tasks in this discovery session'}</span></span>}
       {progress.updated_at && <span>Latest event {age(progress.updated_at, now)} ago</span>}
       <a href="#notebook/discovery">Discovery details</a>
     </div>
     {progress.agents.length > 2 && <details className="research-progress-roster"><summary>Recent agent activity</summary><ul>{progress.agents.map(agent => <li key={agent.task_id}><strong>{words(agent.role)}</strong> · {words(agent.stage)} · {words(agent.status)}{agent.model && ` · ${agent.model}`}{(agent.activity || agent.error_message || agent.wait_reason) && <p>{agent.activity || agent.error_message || agent.wait_reason}</p>}</li>)}</ul><a href="#notebook/discovery">View the full discovery agenda</a></details>}
     <ErrorNotice text={error} />
+  </section>;
+}
+
+function ManagerDirection({ request, state, refresh, onSaved }: {
+  request: DirectionRequest; state: State; refresh: () => Promise<void>; onSaved: (notice: string) => void;
+}) {
+  const command = useCommand(state.campaign);
+  const [reply, setReply] = useState(''), [error, setError] = useState('');
+  const [busy, setBusy] = useState(false), [saved, setSaved] = useState(false);
+  const reference = `Reply to campaign manager request ${request.id} (discovery session ${request.session_id}):\n\n`;
+  async function submit(event: FormEvent) {
+    event.preventDefault();
+    if (busy || saved || !reply.trim()) return;
+    setBusy(true); setError(''); onSaved('');
+    try {
+      await command('research.start', { mode: 'discuss', message: reference + reply.trim() });
+      setSaved(true);
+      onSaved('Reply saved for the campaign manager. Follow its next response in the notebook’s Conversation tab.');
+      // A failed refresh must not turn an accepted reply into another send.
+      try { await refresh(); }
+      catch (failure) { setError(`Your reply was saved, but refreshing the workspace failed: ${errorText(failure)}`); }
+    } catch (failure) { setError(errorText(failure)); }
+    finally { setBusy(false); }
+  }
+  return <section className="research-direction" aria-label="Manager request and reply">
+    <h3>{request.kind === 'allocation' ? 'Saved wrap-up' : 'Manager’s request'}</h3>
+    {request.summary && <p className="discovery-prose">{request.summary}</p>}
+    {request.questions.length > 0 ? <ol>{request.questions.map((question, index) => <li key={index}>{question}</li>)}</ol>
+      : <p>{request.kind === 'allocation' ? 'Send guidance about the saved work or the allocation needed to continue.'
+        : 'The manager did not leave a specific question. Tell it what you want to do next.'}</p>}
+    {!saved && <form onSubmit={submit}>
+      <Field label="Your reply to the campaign manager">
+        <textarea aria-label="Your reply to the campaign manager" rows={4} value={reply} onChange={event => setReply(event.target.value)}
+          maxLength={20000 - reference.length} required placeholder="Answer the questions above, ask for clarification, or give new direction." />
+      </Field>
+      <button className="button primary" disabled={busy || !reply.trim()}>{busy ? 'Sending reply…' : 'Send reply'}</button>
+    </form>}
+    <ErrorNotice text={error} />
+    <a href="#notebook/conversation">View manager conversation</a>
   </section>;
 }

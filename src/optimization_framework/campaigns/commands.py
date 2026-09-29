@@ -17,11 +17,16 @@ from optimization_framework.contracts.commands import HypothesisReviewInput, Hyp
 from optimization_framework.contracts.commands import ResearchControlInput, ResearchRetryInput, DecisionResolveInput, DecisionRefreshInput, SourceRecordInput, SourceIngestInput
 from optimization_framework.contracts.commands import InferenceRunInput, FinalistSetInput
 from optimization_framework.contracts.manager import ContextImportInput
+from optimization_framework.contracts.commands import ComparisonReportInput
 
 
 DELEGATED = {"discovery.assessment.save", "discovery.assessment.launch", "discovery.assessment.decide", "trial.create", "draft.save", "draft.launch", "reproduction.draft", "reproduction.compare", "study.nominate", "validation.run", "validation.require", "validation.execute", "validation.waive", "inference.run", "asset.reuse", "comparison.report", "finding.record",
              "bundle.export", "bundle.inspect", "bundle.publish", "cost.reconcile",
              "implementation.commission", "implementation.attach", "evaluator.commission", "evaluator.attach", "implementation.control", "implementation.revalidate", "implementation.reuse", "implementation.resolve_runtime", "research.start", "literature.search", "source.ingest", "confirmation.schedule", "confirmation.validate", "confirmation.release", "asset.import_reference_set"}
+
+
+DELEGATED.update({"fixed_mask.run", "hypothesis.create", "hypothesis.review", "hypothesis.status",
+                  "trial.control", "study.create", "study.activate", "implementation.bind_builtin"})
 
 
 class CommandService:
@@ -78,9 +83,14 @@ class CommandService:
     def describe():
         """Use the application's schemas in prompts instead of a second tool model."""
         from optimization_framework.research.discovery.models import DiscoveryStart, DiscoveryControl, DiscoveryAmend, DiscoveryRetry
+        from optimization_framework.agents.models import Activate, Message, Control, Rollback
+        from optimization_framework.agents.diagnostics import FixedMaskInput
         from optimization_framework.research.model_policy import ModelPolicyUpdate
+        from optimization_framework.implementations.references import ReferenceInput
+        from optimization_framework.implementations.builtin import BuiltinBindingInput
         from optimization_framework.research.discovery.assessment import AssessmentSave, AssessmentLaunch, AssessmentDecision
-        models = {"campaign.create": CampaignInput, "campaign.update": CampaignUpdateInput,
+        models = {"agent.activate": Activate, "agent.message": Message, "agent.control": Control, "agent.rollback": Rollback,
+            "fixed_mask.run": FixedMaskInput, "comparison.report": ComparisonReportInput, "campaign.create": CampaignInput, "campaign.update": CampaignUpdateInput,
             "models.configure": ModelPolicyUpdate,
             "discovery.start": DiscoveryStart, "discovery.control": DiscoveryControl, "discovery.amend": DiscoveryAmend, "discovery.retry": DiscoveryRetry,
             "discovery.assessment.save": AssessmentSave, "discovery.assessment.launch": AssessmentLaunch, "discovery.assessment.decide": AssessmentDecision,
@@ -98,6 +108,7 @@ class CommandService:
             "validation.revoke_waiver": WaiverRevocationInput,
             "asset.reuse": ReuseInput, "finding.record": FindingInput, "implementation.commission": CommissionInput,
             "asset.import_reference_set": ReferenceImportInput,
+            "implementation.reference": ReferenceInput, "implementation.bind_builtin": BuiltinBindingInput,
             "implementation.attach": AttachInput, "research.start": ResearchInput, "literature.search": SearchInput,
             "research.control": ResearchControlInput, "research.retry": ResearchRetryInput,
             "decision.resolve": DecisionResolveInput, "decision.refresh": DecisionRefreshInput,
@@ -217,13 +228,28 @@ class CommandService:
         payload = dict(command.payload)
         if payload.get("campaign_id", command.campaign_id) != command.campaign_id:
             raise ValueError("Command payload refers to another campaign")
+        if command.operation == "agent.activate":
+            return self.workspace.pi.activate(command.campaign_id, payload, command.id)
+        if command.operation == "agent.message":
+            return self.workspace.pi.message(command.campaign_id, payload, command.id)
+        if command.operation == "agent.control":
+            return self.workspace.pi.control(command.campaign_id, payload, command.id)
+        if command.operation == "agent.rollback":
+            return self.workspace.pi.rollback(command.campaign_id, payload)
+        if command.operation == "fixed_mask.run":
+            from optimization_framework.agents.diagnostics import reserve
+            return reserve(self.workspace, command.campaign_id, payload, command.id)
         if command.operation == "models.configure":
             record = self.workspace.models.save(command.campaign_id, payload)
             return {"model_policy_id": record["id"], "revision": record["revision"]}
         if command.operation == "discovery.start":
+            if self.workspace.pi.owns(command.campaign_id):
+                raise ValueError("Pi owns this campaign. Send discovery requests through Message the PI.")
             session = self.workspace.discovery.start(command.campaign_id, payload, command.id)
             return {"session_id": session["id"], "session": session}
         if command.operation == "discovery.control":
+            if self.workspace.pi.owns(command.campaign_id):
+                raise ValueError("This discovery session is archived. Use the PI agent controls.")
             session = self.workspace.discovery.control(command.campaign_id, payload)
             return {"session_id": session["id"], "session": session}
         if command.operation == "discovery.amend":
@@ -251,18 +277,25 @@ class CommandService:
                 values = HypothesisInput(**{**payload, "campaign_id": command.campaign_id})
                 hypothesis = hypotheses.create(self.workspace, command.campaign_id, values,
                     identity="hypothesis_" + command.id, bundle=prepared)
+                if actor == "manager":
+                    hypothesis.update(origin="pi" if self.workspace.pi.owns(command.campaign_id) else "manager", requires_concept_review=True)
+                    self.store.put("hypothesis", hypothesis)
+                    if self.workspace.pi.owns(command.campaign_id):
+                        self.store.put_immutable("agent_alias", {"id": "pi_alias_" + hypothesis["id"], "campaign_id": command.campaign_id,
+                            "label": f"H{len(self.store.list('hypothesis', command.campaign_id)):02d}", "record_id": hypothesis["id"], "candidate_id": None})
             else:
                 hypothesis = self._target(command, "hypothesis_id", "hypothesis")
                 if command.operation == "hypothesis.review":
                     values = HypothesisReviewInput(**payload)
-                    hypothesis = hypotheses.review(self.workspace, hypothesis, values.text, identity="review_" + command.id)
+                    hypothesis = hypotheses.review(self.workspace, hypothesis, values.text, identity="review_" + command.id, author=actor)
                 else:
                     model = HypothesisStatusInput if command.operation == "hypothesis.status" else HypothesisNominateInput
                     values = model(**payload)
                     hypothesis = hypotheses.set_status(self.workspace, hypothesis,
                         values.status if command.operation == "hypothesis.status" else "finalist", values.expected_status_revision)
             guidance = self.workspace.memory.state(command.campaign_id)
-            guidance["guidance_revision"] += 1
+            if actor == "researcher":
+                guidance["guidance_revision"] += 1
             self.store.put("manager_state", guidance)
             self.store.put("outbox", {"id": "projection_" + command.id, "kind": "manager_context_projection",
                 "campaign_id": command.campaign_id, "status": "pending", "created_at": now()}, "effect.queued")
@@ -366,6 +399,13 @@ class CommandService:
             self._target(command, "draft_id", "experiment_draft")
             launched = self.workspace.drafts.launch(command.campaign_id, DraftLaunchInput(**payload), authority=actor)
             return {"draft_id": launched["draft_id"], "trial_id": launched["trial_id"]}
+        if command.operation == "implementation.bind_builtin":
+            from optimization_framework.implementations.builtin import bind
+            return bind(self.workspace, command.campaign_id, payload, command.id)
+        if command.operation == "implementation.reference":
+            self._target(command, "hypothesis_id", "hypothesis")
+            from optimization_framework.implementations.references import capture
+            return capture(self.workspace, command.campaign_id, payload, command.id)
         if command.operation == "implementation.commission":
             self._target(command, "hypothesis_id", "hypothesis")
             values = CommissionInput(**payload).model_dump(exclude={"schema_version"})
@@ -539,7 +579,7 @@ class CommandService:
             return {"revocation_id": self.workspace.validations.revoke(revocation)["id"]}
         if command.operation == "comparison.report":
             from optimization_framework.analysis.general import report
-            return report(self.workspace, command.campaign_id, **payload)
+            return report(self.workspace, command.campaign_id, **ComparisonReportInput.model_validate(payload).model_dump(exclude={"schema_version"}))
         if command.operation == "finding.record":
             from .findings import record
             return record(self.workspace, command, actor)

@@ -23,7 +23,8 @@ import httpx
 
 MAX_BYTES = 2_000_000
 ALLOWED_HOSTS = frozenset({"export.arxiv.org", "api.crossref.org", "arxiv.org", "proceedings.mlr.press",
-                           "www.nature.com", "nature.com", "openreview.net", "pmc.ncbi.nlm.nih.gov"})
+                           "www.nature.com", "nature.com", "openreview.net", "pmc.ncbi.nlm.nih.gov",
+                           "github.com", "raw.githubusercontent.com"})
 _REQUEST_LOCK = threading.Lock()
 _LAST_ARXIV_REQUEST = 0.0
 

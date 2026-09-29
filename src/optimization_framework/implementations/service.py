@@ -8,7 +8,7 @@ from pathlib import Path
 import threading
 import time
 
-from optimization_framework.implementations.models import (BehaviorCheck, BoundOptimizerSpec, BuildResult, Contract, EvaluatorSpec, ImplementationSpec, JobRequest,
+from optimization_framework.implementations.models import (BehaviorCheck, MechanismCheck, BoundOptimizerSpec, BuildResult, Contract, EvaluatorSpec, ImplementationSpec, JobRequest,
                      Package, ReviewResult, RevalidationRequest, CapabilityUnavailable, check_parameters, digest, parse_job_request)
 from optimization_framework.implementations.runtime import PROTOCOL, prepare_runtime, tree_hashes, write_package
 from optimization_framework.implementations.validation import evaluator_identity, profile_identity, validate_package
@@ -68,6 +68,7 @@ If implementation is impossible return package=null and a concrete blocker. Repo
 
 class ValidationPlan(Contract):
     checks: list[BehaviorCheck]
+    mechanism_checks: list[MechanismCheck] = []
     rationale: str
     blocker: str | None
 
@@ -287,7 +288,12 @@ class ImplementationService:
                 if missing:
                     raise CapabilityUnavailable("Evaluator capabilities are unavailable: " + ", ".join(sorted(missing)))
             factory = self.adapter_factory or LLMAdapter
-            adapter = factory(max_calls=request.max_calls, max_output_tokens=8192,
+            if request.agent_parent_id:
+                from optimization_framework.agents.implementation import PiImplementationAdapter
+                adapter = PiImplementationAdapter(request, deadline_monotonic=started + request.compute_seconds - spent,
+                    progress=progress, usage=job.get("usage") or None)
+            else:
+                adapter = factory(max_calls=request.max_calls, max_output_tokens=8192,
                               budget_usd=request.api_budget_usd, usage=job.get("usage") or None,
                               reservation_callback=emit, config={**provider_status(),
                                   "model_policy": request.model_policy.model_dump(mode="json") if request.model_policy else None,
@@ -300,16 +306,18 @@ class ImplementationService:
                         "rationale": "Independent fixtures frozen in the commissioning request"})
             elif not job.get("validation_plan"):
                 if request.spec.behavior_checks:
-                    plan = ValidationPlan(checks=request.spec.behavior_checks, rationale="Commissioned acceptance checks", blocker=None)
+                    plan = ValidationPlan(checks=request.spec.behavior_checks, mechanism_checks=request.spec.mechanism_checks,
+                        rationale="Commissioned acceptance checks", blocker=None)
                 else:
                     plan = adapter.call("implementation_test_designer", {"spec": request.spec.model_dump()},
-                        result_type=ValidationPlan, instructions="Design protected, inexpensive black-box checks of this declared algorithm before seeing any candidate code. Choose supported assertions; use exact_designs for a hand-calculated deterministic reference. Do not assert performance superiority. If the mechanism is underspecified or cannot be checked with this contract, return a concrete blocker. At least one check is required.")
+                        result_type=ValidationPlan, instructions="Design protected, inexpensive black-box checks of this declared algorithm before seeing any candidate code. Choose supported assertions; use exact_designs for a hand-calculated deterministic reference. Use mechanism_checks on optimizer_v1 inspect() JSON pointers for necessary normalization, tangent-space, PSD and rank invariants; require those fields in the frozen plan. Do not assert performance superiority. If the mechanism is underspecified or cannot be checked with this contract, return a concrete blocker. At least one behavioral check is required.")
                     self.update_job(job_id, usage=adapter.usage)
                 if plan.blocker or not plan.checks:
                     raise CapabilityUnavailable(plan.blocker or "A specification-specific validation check is required")
                 job = self.update_job(job_id, validation_plan=plan.model_dump())
             if not is_evaluator:
-                spec = request.spec.model_copy(update={"behavior_checks": [BehaviorCheck.model_validate(c) for c in job["validation_plan"]["checks"]]})
+                spec = request.spec.model_copy(update={"behavior_checks": [BehaviorCheck.model_validate(c) for c in job["validation_plan"]["checks"]],
+                    "mechanism_checks": [MechanismCheck.model_validate(c) for c in job["validation_plan"].get("mechanism_checks", [])]})
                 spec = type(request.spec).model_validate(spec.model_dump())
             progress()
             runtime_root, runtime = prepare_runtime(self.directory / "runtimes", spec.dependencies,

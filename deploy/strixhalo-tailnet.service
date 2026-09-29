@@ -1,0 +1,18 @@
+[Unit]
+Description=DQN Meent lab and TailNet HTTP access
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+WorkingDirectory=/home/chs/Work/dqn-meent
+Environment="PATH=/home/chs/.nvm/versions/node/v24.15.0/bin:/home/chs/.local/bin:/usr/local/bin:/usr/bin:/bin"
+Environment="GRATING_CODEX_BINARY=/home/chs/.nvm/versions/node/v24.15.0/bin/codex"
+ExecStartPre=/home/chs/Work/dqn-meent/scripts/labctl start --config /home/chs/Work/dqn-meent/deploy/strixhalo-tailnet.json
+ExecStart=/home/chs/Work/dqn-meent/scripts/tailnet-http-proxy
+ExecStop=/home/chs/Work/dqn-meent/scripts/labctl stop --config /home/chs/Work/dqn-meent/deploy/strixhalo-tailnet.json
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=default.target

@@ -14,10 +14,15 @@ export function ProposalComposer({ state, actions, operation, parent, onClose }:
   const [count, setCount] = useState(operation === 'hybrid' ? 2 : 3);
   const [direction, setDirection] = useState('');
   const [busy, setBusy] = useState(false);
+  const session = state.research_progress?.session;
+  const piOwned = !!state.agent_runtime?.configuration?.enabled;
+  const hasDiscovery = piOwned || Boolean(session && !['completed', 'stopped', 'exhausted'].includes(session.status));
   const title = { expand: 'Generate more proposals', diversify: 'Diversify a proposal', hybrid: 'Combine two proposals' }[operation];
   const valid = operation === 'expand' || !!first && (operation !== 'hybrid' || !!second && second !== first);
   async function submit(event: React.FormEvent) {
-    event.preventDefault(); setBusy(true);
+    event.preventDefault();
+    if (!hasDiscovery || !valid || busy) return;
+    setBusy(true);
     const ids = operation === 'expand' ? [] : operation === 'diversify' ? [first] : [first, second];
     const names = ids.map(id => parents.find(h => h.id === id)!.title);
     const purpose = operation === 'expand'
@@ -32,7 +37,8 @@ export function ProposalComposer({ state, actions, operation, parent, onClose }:
   }
   return <Modal title={title} description="The campaign manager coordinates generation, independent review, and empirical follow-up." onClose={onClose}>
     <form onSubmit={submit}>
-      {state.research_progress?.session?.status === 'paused' && <div className="callout proposal-paused-notice" role="status"><strong>Discovery is paused</strong><p>Your request will be saved in the queue. Select Resume discovery in the progress panel when you want the agents to begin.</p></div>}
+      {!hasDiscovery && <div className="callout" role="status"><strong>Start discovery to generate proposals</strong><p>Open Research notebook → Discovery, choose the problem and session limits, then select Start discovery. Return here to request proposals.</p><a className="button secondary" href="#notebook/discovery" onClick={onClose}>Set up discovery</a></div>}
+      {session?.status === 'paused' && <div className="callout proposal-paused-notice" role="status"><strong>Discovery is paused</strong><p>Your request will be saved in the queue. Select Resume discovery in the progress panel when you want the agents to begin.</p></div>}
       {operation !== 'expand' && <Field label={operation === 'hybrid' ? 'First parent proposal' : 'Parent proposal'}>
         <select aria-label="First parent proposal" value={first} onChange={e => setFirst(e.target.value)}>
           {parents.map(h => <option key={h.id} value={h.id}>{h.title}</option>)}
@@ -46,8 +52,8 @@ export function ProposalComposer({ state, actions, operation, parent, onClose }:
       </Field>}
       <Field label="Requested proposal count"><input aria-label="Requested proposal count" type="number" min={1} max={6} value={count} onChange={e => setCount(Number(e.target.value))} required /></Field>
       <Field label="Direction or constraints (optional)"><textarea aria-label="Direction or constraints" rows={4} value={direction} onChange={e => setDirection(e.target.value)} placeholder="For example: combine tabu memory with surrogate ranking, while keeping startup costs low." /></Field>
-      <p className="help-text">Requires an optimizer discovery session. A paused session keeps this request queued until you resume it. Missing implementations are handled by the separate implementation service. Existing resource limits apply.</p>
-      <div className="modal-actions"><button type="button" className="button secondary" onClick={onClose}>Cancel</button><button className="button primary" disabled={busy || !valid}>{busy ? 'Sending…' : 'Send to campaign manager'}</button></div>
+      <p className="help-text">{piOwned ? 'The PI delegates generation, independent review and implementation within this campaign’s allocations.' : 'Requires an optimizer discovery session. A paused session keeps this request queued until you resume it. Missing implementations are handled by the separate implementation service. Existing resource limits apply.'}</p>
+      <div className="modal-actions"><button type="button" className="button secondary" onClick={onClose}>Cancel</button><button className="button primary" disabled={busy || !valid || !hasDiscovery}>{busy ? 'Sending…' : 'Send to campaign manager'}</button></div>
     </form>
   </Modal>;
 }

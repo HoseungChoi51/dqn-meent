@@ -96,6 +96,8 @@ class Workspace:
         self.on_manager_tick = None
         from optimization_framework.research.discovery.controller import DiscoveryController
         self.discovery = DiscoveryController(self)
+        from optimization_framework.agents.controller import PiController
+        self.pi = PiController(self)
 
     def start(self):
         if self._lease:
@@ -137,6 +139,8 @@ class Workspace:
                 from optimization_framework.evaluation.diagnostics import reconcile as reconcile_diagnostics
                 reconcile_diagnostics(self)
                 self.study_executions.reconcile()
+                from optimization_framework.agents.diagnostics import reconcile as reconcile_fixed_masks
+                reconcile_fixed_masks(self)
                 self.confirmations.reconcile_reports(on_error=self.memory.issue)
                 if self.on_manager_tick:
                     self.on_manager_tick()
@@ -1314,7 +1318,7 @@ class Workspace:
                 self.reconcile()
                 with self.lock:
                     trials = self.store.list("trial")
-                    free = self.max_workers - sum(t["status"] in LIVE for t in trials)
+                    free = self.max_workers - sum(t["status"] in LIVE for t in trials) - sum(j["status"] in {"starting", "running"} for j in self.store.list("fixed_mask_job"))
                     queued = sorted((t for t in trials if t["status"] == "queued" and self.dependencies_ready(t)), key=lambda t: (-t["priority"], t["created_at"]))
                     for trial in queued:
                         if free <= 0:

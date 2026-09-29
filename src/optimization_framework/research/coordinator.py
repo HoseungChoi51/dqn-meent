@@ -12,7 +12,7 @@ from optimization_framework.research.providers import api_spend, provider_status
 # These researcher-interface controls are not scientific action proposals.
 # Explicitly scoped callers can still supply their schemas when needed.
 INTERFACE_COMMANDS = {"campaign.create", "context.import", "context.edit", "models.configure", "issue.resolve",
-    "decision.resolve", "decision.refresh", "research.control", "research.retry", "finalist.set"}
+    "decision.resolve", "decision.refresh", "research.control", "research.retry", "finalist.set", "implementation.reference", "implementation.bind_builtin"}
 
 
 class ResearchCancelled(Exception):
@@ -121,15 +121,16 @@ class ResearchCoordinator:
         """Validate admission without allocating a turn or executing a provider."""
         self.store.get(request.campaign_id, "campaign")
         if request.proposal_operation:
+            pi_owned = self.workspace.pi.owns(request.campaign_id)
             discovery = getattr(self.workspace, "discovery", None)
             session = discovery.active(request.campaign_id) if discovery else None
-            if not session:
+            if not session and not pi_owned:
                 raise ValueError("Start an optimizer discovery session in Research notebook before requesting new proposals")
             for identity in request.parent_hypothesis_ids:
                 parent = self.store.get(identity, "hypothesis")
                 if parent["campaign_id"] != request.campaign_id or parent.get("status") == "archived":
                     raise ValueError("Select active parent proposals from this campaign")
-                if parent.get("candidate_id"):
+                if parent.get("candidate_id") and not pi_owned:
                     discovery._evidence(session, parent["candidate_id"])
         target = self.store.get(request.hypothesis_id, "hypothesis") if request.hypothesis_id else None
         if target and target["campaign_id"] != request.campaign_id:

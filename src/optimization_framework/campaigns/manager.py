@@ -127,6 +127,9 @@ class CampaignManager(research.ResearchCoordinator):
             campaigns = [self.store.get(campaign_id, "campaign")] if campaign_id else self.store.list("campaign")
             for campaign in campaigns:
                 cid = campaign["id"]
+                if self.workspace.pi.owns(cid):
+                    self.workspace.pi.tick(cid)
+                    continue
                 inbox.consume_events(self.workspace, cid)
                 runs = self.store.list("research_run", cid)
                 refreshes = [row for row in self.store.list("manager_command", cid)

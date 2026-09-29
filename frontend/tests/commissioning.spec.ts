@@ -169,7 +169,7 @@ test('commissioned optimizer and evaluator preserve the draft, binding, and upst
   await dialog.getByLabel('Runnable implementation').selectOption('');
   await dialog.getByRole('button', { name: 'Save hypothesis', exact: true }).click();
   await expect(dialog).not.toBeVisible();
-  await page.getByRole('button', { name: /Commissioned coordinate search.*Implementation missing/ }).click();
+  await page.getByRole('button', { name: /Commissioned coordinate search.*No campaign implementation/ }).click();
   await dialog.getByRole('button', { name: 'Design experiment', exact: true }).click();
   await dialog.getByLabel('Experiment title').fill('Both executables required');
   await dialog.getByLabel('Evaluation requests', { exact: true }).fill('4');
@@ -201,7 +201,7 @@ test('commissioned optimizer and evaluator preserve the draft, binding, and upst
   expect(evaluated.studies.find((item: any) => item.id === study.id)).toEqual(study);
 
   await page.goto(`${base}/#hypotheses`);
-  await page.getByRole('button', { name: /Commissioned coordinate search.*Implementation missing/ }).click();
+  await page.getByRole('button', { name: /Commissioned coordinate search.*No campaign implementation/ }).click();
   await dialog.getByRole('button', { name: 'Request implementation', exact: true }).click();
   await expect(dialog.getByLabel('Required evaluator capabilities')).toHaveValue('continuous, scalar_objective');
   await expect(dialog.getByText(`Correctness checks will use evaluator ${evaluatorId}.`)).toBeVisible();

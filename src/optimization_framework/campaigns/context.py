@@ -50,7 +50,9 @@ def assemble(workspace, campaign, state, records):
         discovery={"sessions": [{key: row.get(key) for key in ("id", "status", "problem_task_id", "round", "control_revision", "policy")}
                         for kind, row in records if kind == "discovery_session"],
             "active_tasks": [{key: row.get(key) for key in ("id", "session_id", "brief", "status", "wait_reason", "artifact_ids")}
-                for kind, row in records if kind == "discovery_task" and row["status"] not in {"completed", "failed", "cancelled", "superseded"}],
+                for kind, row in records if kind == "discovery_task" and row["status"] not in {"completed", "failed", "cancelled", "superseded", "handed_off"}],
+            "handoffs": [{key: row.get(key) for key in ("id", "task_id", "reason", "artifact_ids")}
+                for kind, row in records if kind == "discovery_handoff"],
             "candidate_ids": [row["id"] for kind, row in records if kind == "discovery_candidate"],
             "assessment_ids": [row["id"] for kind, row in records if kind == "discovery_assessment"],
             "recent_artifacts": [{key: row.get(key) for key in ("id", "kind", "title", "task_id", "stale", "limitations")}

@@ -44,7 +44,9 @@ function OptimizerTrialForm({ state, hypothesis, taskId, draft, onClose, onDone,
   const [problemCatalog, setProblemCatalog] = useState<Json[]>([]), [inferenceAdapters, setInferenceAdapters] = useState<Json[]>([]);
   const command = useCommand(state.campaign);
   const selected = state.tasks.find(t => t.id === task);
-  const native = state.algorithms.filter(a => !selected?.problem || !a.representations || a.representations.includes(selected.problem.candidate_schema.representation));
+  const native = state.algorithms.filter(a => !selected?.problem ||
+    ((!a.representations || a.representations.includes(selected.problem.candidate_schema.representation)) &&
+     (!a.problem_ids || a.problem_ids.includes(selected.problem.definition_id))));
   const versions: Json[] = (state.implementation_library?.versions || []).filter((v: Json) => v.status === 'validated' && v.kind !== 'evaluator');
   const implementation = algorithm === 'proposal' ? proposal?.implementation_version_id || proposal?.algorithm || '' : algorithm;
   const optimizerReady = algorithm === 'proposal' ? !!proposal?.implementation_readiness?.runnable

@@ -1,0 +1,8 @@
+# Allow bubblewrap to create the isolated namespaces required by the library.
+# See https://discourse.ubuntu.com/t/understanding-apparmor-user-namespace-restriction/58007
+abi <abi/4.0>,
+include <tunables/global>
+
+profile grating_bwrap /usr/bin/bwrap flags=(unconfined) {
+    userns,
+}

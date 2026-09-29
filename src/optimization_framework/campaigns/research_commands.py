@@ -64,6 +64,9 @@ def control(workspace, command):
         if run["status"] == "running":
             run["status"] = "stopping"
     else:
+        if workspace.pi.owns(command.campaign_id):
+            queued = workspace.pi.message(command.campaign_id, {"message": "Continue the unfinished legacy assignment " + run["id"] + ". Read its saved checkpoint and current campaign state; preserve completed work."}, command.id)
+            return {"agent_run_id": queued["id"], "legacy_run_id": run["id"]}
         if run["status"] != "interrupted" or not run.get("checkpoint"):
             raise ValueError("Only an interrupted discussion with a checkpoint can be resumed")
         campaign = workspace.store.get(command.campaign_id, "campaign")
@@ -108,6 +111,12 @@ def refresh(workspace, command):
     from .decisions import public_decision
     values = DecisionRefreshInput(**command.payload)
     if values.retry_run_id:
+        if workspace.pi.owns(command.campaign_id):
+            old = workspace.store.get(values.retry_run_id, "research_run")
+            if old["campaign_id"] != command.campaign_id:
+                raise ValueError("Review belongs to another campaign")
+            queued = workspace.pi.message(command.campaign_id, {"message": "Continue unfinished decision reassessment " + old["id"] + ". Reuse completed independent reviews; route unfinished reviews to separate subagents. " + values.comment}, command.id)
+            return {"agent_run_id": queued["id"], "legacy_run_id": old["id"]}
         from optimization_framework.research.decision_review import retry
         return retry(workspace, command, values)
     selected, existing = [], []

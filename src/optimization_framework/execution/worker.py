@@ -350,6 +350,7 @@ class ExperimentWorker:
             encoding_error = f"Candidate is not finite JSON: {exc}"
         request = {"id": "request_" + uuid.uuid4().hex, "experiment_id": self.spec["id"], "attempt_id": self.attempt_id,
                    "proposal_id": proposal.id, "candidate": candidate, "created_at": now(), "spec_hash": self.spec_hash,
+                   "proposal_metadata": proposal.metadata,
                    "fidelity": instance.fidelity, "evaluator_identity": instance.evaluation_identity}
         append_json(self.directory / "requests.jsonl", request)
         self.request_count += 1
@@ -363,7 +364,12 @@ class ExperimentWorker:
             status, error = "invalid_candidate", str(exc)
         if status == "ok":
             try:
-                evaluation = self.evaluator.evaluate(candidate)
+                if hasattr(self.evaluator, "evaluate_proposal"):
+                    evaluation = self.evaluator.evaluate_proposal(candidate, proposal.metadata)
+                elif proposal.metadata.get("flrl_gradient") is not None:
+                    raise ValueError("The selected evaluator does not support Fourier gradients")
+                else:
+                    evaluation = self.evaluator.evaluate(candidate)
                 if self.problem.primary_objective.name not in evaluation.objectives:
                     raise ValueError("Evaluator omitted the primary objective")
             except Exception as exc:

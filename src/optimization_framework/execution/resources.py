@@ -30,6 +30,11 @@ class ResourceLedger:
 
     def members(self, campaign_id, *, exclude=None):
         totals = {}
+        for diagnostic in self.store.list("fixed_mask_job", campaign_id):
+            actual = diagnostic.get("execution_seconds", 0)
+            row = totals.setdefault(None, {"actual": 0.0, "committed": 0.0})
+            row["actual"] += actual
+            row["committed"] += max(actual, diagnostic["wall_seconds"]) if diagnostic["status"] in {"queued", "starting", "running"} else actual
         for trial in self.store.list("trial", campaign_id):
             if trial["id"] == exclude:
                 continue

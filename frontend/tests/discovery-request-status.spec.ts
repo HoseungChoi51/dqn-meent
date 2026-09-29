@@ -6,7 +6,9 @@ test('Develop strategies exposes a paused request without presenting an old fail
   const state: any = { workspace_id: 'status-workspace', campaign, campaigns: [campaign], tasks: [], trials: [],
     hypotheses: [], decisions: [], messages: [], events: [], algorithms: [], manager_issues: [], manager_commands: [],
     research_runs: [{ id: 'old-failure', status: 'failed', error: 'Historical literature validation failure' }],
-    settings: { llm_configured: true, provider: { configured: true, enabled: true, provider: 'codex', model: 'gpt-6-luna' } }, budget: {} };
+    settings: { llm_configured: true, provider: { configured: true, enabled: true, provider: 'codex', model: 'gpt-6-luna' } }, budget: {},
+    research_progress: { status: 'paused', headline: 'Discovery is paused', message: 'Resume discovery to process saved requests.',
+      active: false, session: { id: 'session', status: 'paused', control_revision: 7 }, agents: [], task_counts: {} } };
   const writes: any[] = [];
   await page.addInitScript(() => { (window as any).EventSource = class extends EventTarget { close() {} }; });
   await page.route('**/api/**', async route => {

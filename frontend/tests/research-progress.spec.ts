@@ -36,6 +36,103 @@ async function mock(page: Page, state: any, write?: (body: any) => any) {
 }
 async function update(page: Page) { await page.evaluate(() => (window as any).__updateWorkspace()); }
 
+function awaitingDirection() {
+  const state = fixture();
+  state.research_progress = { ...state.research_progress, status: 'waiting',
+    headline: 'Campaign manager is waiting for your direction', message: 'Read the manager’s request below and send your reply here.',
+    session: { id: 'discovery-session', status: 'waiting_for_direction', control_revision: 7 },
+    request: { id: 'previous-user-message', message: 'Implement H12.', status: 'completed' },
+    direction_request: { id: 'manager_task_step_5', session_id: 'discovery-session', task_id: 'manager_task', kind: 'questions',
+      summary: 'The H12 implementation handoff is saved. Please confirm the method and choose an allocation.',
+      questions: ['Does H12 mean Mask-aware tangent-space covariance adaptation?', 'What implementation allocation do you authorize?'] } };
+  return state;
+}
+
+test('the notebook shows the manager request with a direct reply form and queues the answer once', async ({ page }) => {
+  const state = awaitingDirection(), writes: any[] = [];
+  await mock(page, state, body => {
+    writes.push(body);
+    state.research_progress = { ...state.research_progress, status: 'queued', headline: 'Request queued',
+      message: 'The campaign manager will process your reply.', direction_request: null,
+      session: { ...state.research_progress.session, status: 'running' }, task_counts: { total: 1, queued: 1 } };
+    return { json: { id: body.id, status: 'completed', outcome: { manager_command_id: 'reply-request' } } };
+  });
+  await page.goto('/#notebook');
+  const request = page.getByRole('region', { name: 'Manager request and reply' });
+  await expect(request).toContainText('Does H12 mean Mask-aware tangent-space covariance adaptation?');
+  await expect(request).toContainText('What implementation allocation do you authorize?');
+  await expect(page.getByRole('region', { name: 'Campaign research progress' })).toContainText('Your latest request:');
+  const reply = request.getByLabel('Your reply to the campaign manager');
+  await expect(reply).toBeInViewport();
+  await expect(request.getByRole('button', { name: 'Send reply', exact: true })).toBeDisabled();
+  await reply.fill('Yes, that is H12. Explain the required allocation before starting implementation.');
+  await request.getByRole('button', { name: 'Send reply', exact: true }).click();
+  await expect(page.getByRole('region', { name: 'Campaign research progress' })).toContainText('Reply saved for the campaign manager.');
+  await expect(request).toHaveCount(0);
+  expect(writes).toHaveLength(1);
+  expect(writes[0]).toMatchObject({ operation: 'research.start', payload: { mode: 'discuss' } });
+  expect(writes[0].payload.message).toContain('manager_task_step_5');
+  expect(writes[0].payload.message).toContain('discovery-session');
+  expect(writes[0].payload.message).toContain('Yes, that is H12. Explain the required allocation');
+});
+
+test('a failed direction reply keeps the request and draft visible and retries the same saved command', async ({ page }) => {
+  const state = awaitingDirection(), writes: any[] = [];
+  await mock(page, state, body => {
+    writes.push(body);
+    if (writes.length === 1) return { status: 503, json: { detail: 'Temporarily unavailable' } };
+    return { json: { id: body.id, status: 'completed', outcome: {} } };
+  });
+  await page.route('**/api/v1/commands/*', route => route.fulfill({ status: 404, json: { detail: 'No saved result yet' } }));
+  await page.goto('/#notebook');
+  const request = page.getByRole('region', { name: 'Manager request and reply' });
+  const reply = request.getByLabel('Your reply to the campaign manager');
+  await reply.fill('Please clarify the implementation allocation.');
+  await update(page);
+  await expect(reply).toHaveValue('Please clarify the implementation allocation.');
+  await request.getByRole('button', { name: 'Send reply', exact: true }).click();
+  await expect(request.getByRole('alert')).toContainText('Temporarily unavailable');
+  await expect(reply).toHaveValue('Please clarify the implementation allocation.');
+  await request.getByRole('button', { name: 'Send reply', exact: true }).click();
+  await expect(page.getByRole('region', { name: 'Campaign research progress' })).toContainText('Reply saved');
+  await expect(request.getByRole('button', { name: 'Send reply', exact: true })).toHaveCount(0);
+  expect(writes).toHaveLength(2);
+  expect(writes[1]).toEqual(writes[0]);
+});
+
+test('waiting without a saved question offers direction without inventing a request', async ({ page }) => {
+  const state = awaitingDirection();
+  state.research_progress.direction_request = { ...state.research_progress.direction_request,
+    kind: 'open_direction', summary: 'Assigned work has finished. Choose the next focus.', questions: [] };
+  await mock(page, state);
+  await page.goto('/#notebook');
+  const request = page.getByRole('region', { name: 'Manager request and reply' });
+  await expect(request).toContainText('The manager did not leave a specific question.');
+  await expect(request.getByLabel('Your reply to the campaign manager')).toBeVisible();
+  await expect(request).not.toContainText('Does H12 mean');
+});
+
+test('allocation wrap-up shows saved handoffs without retrying or claiming success', async ({ page }) => {
+  const state = fixture(), writes: any[] = [];
+  state.research_progress = { ...state.research_progress, status: 'waiting',
+    headline: 'Discovery wrapped up at its allocation',
+    message: 'Partial findings and continuation notes are saved. Review them with the campaign manager; further research needs an allocation change.',
+    session: { id: 'discovery-session', status: 'waiting_for_direction', control_revision: 7 },
+    task_counts: { total: 3, completed: 2, handed_off: 1 },
+    agents: [{ task_id: 'partial', role: 'source_analyst', stage: 'study', status: 'handed_off', active: false,
+      activity: 'Partial findings and remaining work saved for the campaign manager.' }] };
+  await mock(page, state, body => { writes.push(body); });
+  await page.goto('/#hypotheses');
+  const progress = page.getByRole('region', { name: 'Campaign research progress' });
+  await expect(progress).toContainText('Discovery wrapped up at its allocation');
+  await expect(progress).toContainText('2 completed');
+  await expect(progress).toContainText('1 handed off');
+  await expect(progress).not.toContainText('Research work is complete');
+  await expect(progress.getByRole('button', { name: 'Retry failed tasks' })).toHaveCount(0);
+  await expect(progress.locator('.research-progress-spinner')).toHaveCount(0);
+  expect(writes).toHaveLength(0);
+});
+
 test('Develop strategies shows the paused queue before and after submission; Resume is explicit and revision guarded', async ({ page }) => {
   const state = fixture(), writes: any[] = [];
   await mock(page, state, body => {
@@ -60,7 +157,7 @@ test('Develop strategies shows the paused queue before and after submission; Res
   await expect(dialog).toContainText('Discovery is paused');
   await dialog.getByLabel('Direction or constraints').fill('Algorithms with reliable implementations');
   await dialog.getByRole('button', { name: 'Send to campaign manager' }).click();
-  await expect(progress).toContainText('Latest request:');
+  await expect(progress).toContainText('Your latest request:');
   await expect(progress).toContainText('Algorithms with reliable implementations');
   await expect(page.locator('.toast')).toContainText('Request saved. Discovery is paused');
   expect(writes).toHaveLength(1);
@@ -75,7 +172,7 @@ test('Develop strategies shows the paused queue before and after submission; Res
 });
 
 test('active calls show live elapsed time, model and evidence heartbeat; completed and blocked work stops animating', async ({ page }) => {
-  await page.clock.install({ time: new Date(stamp) });
+  await page.clock.install({ time: new Date(Date.parse(stamp) - 60_000) });
   const state = fixture();
   state.research_progress = { ...state.research_progress, status: 'running', headline: 'Campaign manager is working',
     message: 'A model call is in progress.', active: true, session: { id: 'discovery-session', status: 'running', control_revision: 8 },
@@ -87,6 +184,7 @@ test('active calls show live elapsed time, model and evidence heartbeat; complet
   await page.goto('/#hypotheses');
   const progress = page.getByRole('region', { name: 'Campaign research progress' });
   await expect(progress).toContainText('gpt-6-astra · Extra high');
+  await page.clock.pauseAt(new Date(stamp));
   await expect(progress).toContainText('Elapsed 1m 0s');
   await expect(progress).toContainText('Last recorded activity 10s ago');
   await expect(progress).toContainText('tasks in this discovery session');

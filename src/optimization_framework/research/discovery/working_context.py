@@ -7,6 +7,75 @@ from __future__ import annotations
 
 from copy import deepcopy
 
+from optimization_framework.contracts.base import content_hash
+from optimization_framework.research.context import size
+
+
+def page_snapshot_sections(context, run, *, measure, target_bytes, include_evidence=False):
+    """Move growing archive collections behind reads of this task's snapshot.
+
+    Paging individual bodies is insufficient when hundreds of small indexes
+    themselves fill the prompt. Page whole collections, preserving their exact
+    frozen positions and hashes. Authority, the brief, dependencies, guidance,
+    current tool replies and scientific settings/measurements are never moved.
+    The caller recompiles deduplication after each change so references cannot
+    point at a passage that has just been removed from the working context.
+    """
+    if not run.get("id"):
+        return
+    snapshot = run["context_snapshot"]
+    snapshot_hash = None
+    paths = [(key,) for key in ("hypotheses", "history", "research_inventory", "evidence_library",
+        "applicable_assets", "available_implementations", "reference_evidence", "reuse_decisions")]
+    paths += [("discovery", key) for key in ("retrieval_receipts", "artifact_index", "source_captures",
+        "candidates", "assessments", "tasks")]
+    if include_evidence:
+        paths = [("discovery", "evidence")]
+
+    def parent(value, path):
+        for key in path[:-1]:
+            value = value.get(key, {})
+        return value
+
+    paths.sort(key=lambda path: size(parent(context, path).get(path[-1], [])), reverse=True)
+    for path in paths:
+        if measure() <= target_bytes:
+            break
+        owner = parent(context, path)
+        original = parent(snapshot, path).get(path[-1])
+        if not isinstance(original, (list, dict)) or size(owner.get(path[-1], [])) <= 2048:
+            continue
+        pointer = "/" + "/".join(path)
+        pages = context["discovery"].setdefault("context_pages", {})
+        if pointer in pages:
+            continue
+        if snapshot_hash is None:
+            snapshot_hash = content_hash(snapshot)
+        descriptor = {"read_tool": "context.read", "read_arguments": {"record_id": run["id"],
+            "pointer": pointer, "offset": 0, "limit": 20, "max_bytes": 8192},
+            "snapshot_hash": snapshot_hash, "total": len(original),
+            "content_omitted": "This collection is paged, not empty. It remains in this task's frozen snapshot. "
+                "Read selected fields or pages before relying on their content; follow next_offset until the required coverage is complete."}
+        retained = [] if isinstance(original, list) else {}
+        if path == ("discovery", "evidence"):
+            retained = [row for row in owner[path[-1]] if str(row.get("id", "")).startswith("trial_")
+                        and "algorithm" in row and "task_id" in row]
+        if size(descriptor) + size(retained) >= size(owner[path[-1]]):
+            continue
+        pages[pointer] = descriptor
+        owner[path[-1]] = retained
+        if path == ("applicable_assets",):
+            context.pop("applicable_asset_groups", None)
+        if path == ("discovery", "evidence"):
+            # References created by earlier deduplication must not claim that
+            # candidate/review bodies are still supplied after collection paging.
+            for hypothesis in context.get("hypotheses", []):
+                if hypothesis.get("candidate_content_reference"):
+                    hypothesis["candidate_content_reference"]["location"] = "Candidate body is paged; use evidence.read before relying on these fields."
+                for review in hypothesis.get("reviews", []):
+                    if review.pop("full_review_supplied_in_evidence", False):
+                        review["full_review_read_required"] = True
+
 
 def primary_ids(context, task):
     discovery = context["discovery"]

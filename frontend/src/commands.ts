@@ -10,6 +10,16 @@ const prefix = (workspaceId: string) => `optimization.commands.v1:${encodeURICom
 const key = (entry: PendingCommand) => `${prefix(entry.workspace_id)}${entry.request.id}`;
 const notify = () => window.dispatchEvent(new Event(commandJournalEvent));
 
+function actionUUID(): string {
+  if (typeof crypto.randomUUID === 'function') return crypto.randomUUID();
+  // Remote HTTP origins expose getRandomValues, but not randomUUID.
+  const bytes = crypto.getRandomValues(new Uint8Array(16));
+  bytes[6] = (bytes[6] & 0x0f) | 0x40;
+  bytes[8] = (bytes[8] & 0x3f) | 0x80;
+  const hex = Array.from(bytes, byte => byte.toString(16).padStart(2, '0')).join('');
+  return `${hex.slice(0, 8)}-${hex.slice(8, 12)}-${hex.slice(12, 16)}-${hex.slice(16, 20)}-${hex.slice(20)}`;
+}
+
 function canonical(value: any): string {
   if (Array.isArray(value)) return `[${value.map(canonical).join(',')}]`;
   if (value && typeof value === 'object') return `{${Object.keys(value).filter(k => value[k] !== undefined).sort()
@@ -96,7 +106,7 @@ export function useCommand(campaign: Campaign | null, explicitWorkspaceId?: stri
     let entry = pendingCommands(workspaceId).find(item => item.signature === signature);
     const firstSubmission = !entry;
     if (!entry) {
-      const id = crypto.randomUUID();
+      const id = actionUUID();
       entry = JSON.parse(JSON.stringify({ workspace_id: workspaceId, signature, created_at: new Date().toISOString(),
         request: { id: `ui_${id}`, campaign_id: creating ? `campaign_${id}` : campaign!.id,
           expected_revision: creating ? 0 : campaign!.version, operation, payload } }));

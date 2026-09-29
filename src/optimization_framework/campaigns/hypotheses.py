@@ -40,6 +40,6 @@ def set_status(workspace, hypothesis, status, expected_revision):
     return changed
 
 
-def review(workspace, hypothesis, text, *, identity):
-    hypothesis.setdefault("reviews", []).append({"id": identity, "text": text, "author": "researcher", "created_at": now()})
+def review(workspace, hypothesis, text, *, identity, author="researcher"):
+    hypothesis.setdefault("reviews", []).append({"id": identity, "text": text, "author": author, "created_at": now()})
     return workspace.store.put("hypothesis", hypothesis, "hypothesis.reviewed")

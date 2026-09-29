@@ -7,10 +7,10 @@ from .base import Contract
 from .requests import CampaignUpdate, ControlInput, ValidationInput, ReviewInput, DecisionInput
 from optimization_framework.implementations.models import EvaluatorSpec, EvaluatorPackage, EvaluatorCheckSpec, OptimizerCheckSpec
 
-Operation = Literal["campaign.create", "campaign.update", "context.edit", "issue.resolve", "trial.create", "trial.control", "trial.validate", "draft.save", "draft.launch", "reproduction.draft", "reproduction.compare", "study.create", "study.nominate", "finalist.set", "study.freeze_template", "study.activate", "validation.run", "validation.require", "validation.execute", "validation.waive",
+Operation = Literal["agent.activate", "agent.message", "agent.control", "agent.rollback", "fixed_mask.run", "campaign.create", "campaign.update", "context.edit", "issue.resolve", "trial.create", "trial.control", "trial.validate", "draft.save", "draft.launch", "reproduction.draft", "reproduction.compare", "study.create", "study.nominate", "finalist.set", "study.freeze_template", "study.activate", "validation.run", "validation.require", "validation.execute", "validation.waive",
     "models.configure", "discovery.start", "discovery.control", "discovery.amend", "discovery.retry", "discovery.assessment.save", "discovery.assessment.launch", "discovery.assessment.decide",
     "validation.revoke_waiver", "context.import", "inference.run", "asset.reuse", "asset.import_reference_set", "cost.reconcile", "comparison.report", "finding.record", "implementation.commission",
-    "implementation.attach", "evaluator.commission", "evaluator.attach", "implementation.control", "implementation.revalidate", "implementation.reuse", "implementation.resolve_runtime", "bundle.export", "bundle.inspect", "bundle.publish", "research.start", "research.retry", "research.control", "decision.resolve", "decision.refresh", "source.record", "source.ingest", "hypothesis.create", "hypothesis.review", "hypothesis.status", "hypothesis.nominate", "literature.search", "confirmation.schedule", "confirmation.validate", "confirmation.release"]
+    "implementation.reference", "implementation.bind_builtin", "implementation.attach", "evaluator.commission", "evaluator.attach", "implementation.control", "implementation.revalidate", "implementation.reuse", "implementation.resolve_runtime", "bundle.export", "bundle.inspect", "bundle.publish", "research.start", "research.retry", "research.control", "decision.resolve", "decision.refresh", "source.record", "source.ingest", "hypothesis.create", "hypothesis.review", "hypothesis.status", "hypothesis.nominate", "literature.search", "confirmation.schedule", "confirmation.validate", "confirmation.release"]
 
 
 class Command(Contract):
@@ -122,6 +122,12 @@ class InferenceRunInput(Contract):
     seed: int = Field(ge=0, lt=2**32)
     reuse_decision_ids: list[str] = Field(min_length=1)
     wall_seconds: float = Field(default=120, gt=0, le=86400)
+
+
+class ComparisonReportInput(Contract):
+    study_id: str | None = None
+    cost_axis: Literal["worker_seconds", "full_worker_seconds", "evaluation_requests", "solver_executions"] | None = None
+    cost_view: Literal["full_attributed_cost", "actual_expenditure"] = "full_attributed_cost"
 
 
 class HypothesisReviewInput(ReviewInput):

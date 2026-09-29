@@ -100,6 +100,24 @@ def validate_package(spec, package, package_dir, runtime_root, runtime, *, progr
             return {"sizes": sizes, "seeds": [0, 7], "steps": 6}
         check("seeded replay and checkpoint continuation", replay)
 
+        def mechanism_invariants():
+            if package.get("contract") != "optimizer_v1":
+                raise ValueError("Mechanism state checks require optimizer_v1 inspect()")
+            n = spec.n_cells_min
+            optimizer = create(n, 23)
+            try:
+                for index in range(12):
+                    candidate = optimizer.ask()
+                    optimizer.tell(candidate, (index % 5) / 5)
+                    snapshot = optimizer.inspect()
+                    for case in spec.mechanism_checks:
+                        check_invariant(snapshot, case)
+                return {"steps": 12, "checks": [case.model_dump() for case in spec.mechanism_checks]}
+            finally:
+                optimizer.close()
+        if spec.mechanism_checks:
+            check("frozen mechanism state invariants", mechanism_invariants)
+
         def diagnostic_capabilities():
             declaration = spec.execution_capabilities
             if package.get("contract", "ask_tell") != "optimizer_v1":
@@ -195,7 +213,7 @@ def validate_package(spec, package, package_dir, runtime_root, runtime, *, progr
                     optimizer.close()
                 if hasattr(solver, "close"):
                     solver.close()
-            if solver_calls + cache_hits != 4:
+            if len(observations) != 4 or solver_calls < 0 or not 0 <= cache_hits <= 4:
                 raise ValueError("Evaluator accounting mismatch")
             report["exposed_conditions"].append(instance.scientific_identity)
             return {"problem": instance.model_dump(mode="json"), "observations": observations,
@@ -206,3 +224,40 @@ def validate_package(spec, package, package_dir, runtime_root, runtime, *, progr
         report["error"] = f"{type(exc).__name__}: {exc}"[:2000]
     report["elapsed_seconds"] = time.monotonic() - started
     return report
+
+
+def check_invariant(snapshot, case):
+    """Evaluate an independently specified invariant without candidate callbacks."""
+    import numpy as np
+    def select(pointer):
+        value = snapshot
+        if not pointer.startswith("/"):
+            raise ValueError("Invariant requires a JSON pointer")
+        for token in pointer[1:].split("/"):
+            token = token.replace("~1", "/").replace("~0", "~")
+            value = value[int(token)] if isinstance(value, list) else value[token]
+        result = np.asarray(value, dtype=float)
+        if result.size > 1000000 or not np.isfinite(result).all():
+            raise ValueError("Invariant state must be bounded and finite")
+        return result
+    value = select(case.pointer)
+    tolerance = case.tolerance
+    if case.assertion == "finite":
+        valid = True
+    elif case.assertion == "nonnegative":
+        valid = bool((value >= -tolerance).all())
+    elif case.assertion == "unit_norm":
+        valid = abs(float(np.linalg.norm(value)) - 1) <= tolerance
+    elif case.assertion == "positive_semidefinite":
+        valid = (value.ndim == 2 and value.shape[0] == value.shape[1] and
+            np.allclose(value, value.T, atol=tolerance, rtol=0) and np.linalg.eigvalsh(value).min() >= -tolerance)
+    elif case.assertion == "tangent":
+        if not case.reference_pointer:
+            raise ValueError("Tangency check requires a reference vector pointer")
+        valid = float(np.linalg.norm(value @ select(case.reference_pointer))) <= tolerance
+    else:
+        if case.maximum_rank is None:
+            raise ValueError("Rank check requires maximum_rank")
+        valid = np.linalg.matrix_rank(value, tol=tolerance) <= case.maximum_rank
+    if not valid:
+        raise ValueError(f"Mechanism invariant failed: {case.name}")

@@ -24,12 +24,22 @@ class Contract(BaseModel):
 class BehaviorCheck(Contract):
     """Protected black-box observations, frozen before a candidate is built."""
     name: str = Field(min_length=1, max_length=200)
-    n_cells: int = Field(default=8, ge=1, le=1024)
+    n_cells: int = Field(default=8, ge=1, le=1000000)
     seed: int = Field(default=0, ge=0, le=2**32-1)
     parameters: dict[str, Any] = Field(default_factory=dict)
     efficiencies: list[float] = Field(default_factory=lambda: [.2, .8, .1, .9], min_length=2, max_length=64)
     assertion: Literal["binary", "feasible", "one_bit_from_incumbent", "one_coordinate_from_incumbent", "exact_designs", "unique_proposals"] = "binary"
     expected_designs: list[list[float]] = Field(default_factory=list, max_length=64)
+
+
+class MechanismCheck(Contract):
+    """Frozen invariants on exported optimizer state; no generated test execution."""
+    name: str = Field(min_length=1, max_length=200)
+    pointer: str = Field(min_length=1, max_length=1000)
+    assertion: Literal["finite", "nonnegative", "unit_norm", "positive_semidefinite", "tangent", "rank_at_most"]
+    reference_pointer: str | None = None
+    maximum_rank: int | None = Field(default=None, ge=0)
+    tolerance: float = Field(default=1e-8, gt=0, le=1e-3)
 
 
 class ImplementationSpec(Contract):
@@ -45,12 +55,20 @@ class ImplementationSpec(Contract):
     dependencies: dict[str, str] = Field(default_factory=dict, max_length=20)
     parameters: dict[str, Any] = Field(default_factory=dict)
     parameter_schema: dict[str, Any] = Field(default_factory=lambda: {"type": "object", "additionalProperties": False, "properties": {}})
-    n_cells_min: int = Field(default=2, ge=1, le=1024)
-    n_cells_max: int = Field(default=1024, ge=1, le=1024)
+    n_cells_min: int = Field(default=2, ge=1, le=1000000)
+    n_cells_max: int = Field(default=1024, ge=1, le=1000000)
     max_checkpoint_bytes: int = Field(default=256 * 1024**2, ge=1024, le=4 * 1024**3)
     behavior_checks: list[BehaviorCheck] = Field(default_factory=list, max_length=20)
+    mechanism_checks: list[MechanismCheck] = Field(default_factory=list, max_length=20)
     provenance: list[dict[str, Any]] = Field(default_factory=list, max_length=100)
     exposed_conditions: list[str] = Field(default_factory=list, max_length=10000)
+
+    @model_serializer(mode="wrap")
+    def retain_legacy_identity(self, handler):
+        result = handler(self)
+        if not self.mechanism_checks:
+            result.pop("mechanism_checks", None)
+        return result
 
     @model_validator(mode="after")
     def boundaries(self):
@@ -214,6 +232,7 @@ class JobRequest(Contract):
     api_budget_usd: float = Field(default=0, ge=0, le=10000)
     grant_id: str = Field(min_length=1, max_length=200)
     model_policy: ModelPolicy | None = None
+    agent_parent_id: str | None = None
 
     @model_serializer(mode="wrap")
     def compatible_serialization(self, handler):
@@ -221,6 +240,8 @@ class JobRequest(Contract):
         # Preserve the identity of requests accepted before model policies.
         if self.model_policy is None:
             result.pop("model_policy", None)
+        if self.agent_parent_id is None:
+            result.pop("agent_parent_id", None)
         return result
 
     @model_validator(mode="before")

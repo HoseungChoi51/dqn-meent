@@ -8,6 +8,11 @@ from typing import Literal
 from pydantic import Field
 
 from optimization_framework.contracts.base import Contract
+from optimization_framework.contracts.base import content_hash
+
+
+def hypothesis_revision(hypothesis):
+    return content_hash({key: hypothesis.get(key) for key in ("id", "title", "mechanism", "rationale", "parent_ids", "algorithm_config", "candidate_id")})
 
 
 class ProposalReview(Contract):
@@ -52,6 +57,9 @@ def readiness(store, hypothesis):
     reviews = [row for row in store.list("discovery_artifact", hypothesis["campaign_id"])
                if row.get("kind") == "proposal_review" and not row.get("stale")
                and row["content"].get("candidate_id") == hypothesis.get("candidate_id")]
+    reviews += [row for row in store.list("agent_artifact", hypothesis["campaign_id"])
+        if row.get("kind") == "proposal_review" and row["content"].get("hypothesis_id") == hypothesis["id"]
+        and row["content"].get("hypothesis_hash") == hypothesis_revision(hypothesis)]
     if not reviews:
         return {"state": "pending", "eligible": False, "review_ids": [],
                 "reason": "An independent conceptual review is required before testing this proposal."}

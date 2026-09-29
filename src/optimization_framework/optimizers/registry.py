@@ -4,6 +4,7 @@ from optimization_framework.contracts.capabilities import OptimizerCapabilities
 from .lifecycle import AskTellAdapter, BoundedSearch
 from .config import TrainConfig
 from pydantic import TypeAdapter
+from dqn_meent.flrl_specs import METHODS as FOURIER_METHODS, PROPERTIES as FOURIER_PROPERTIES
 
 
 METHODS = [
@@ -22,12 +23,14 @@ METHODS = [
         ("block_tabu", "Adaptive block tabu", "Coordinated moves with recent-candidate memory."),
         ("population", "Population search", "Recombination and mutation of a binary population."),
         ("surrogate", "Surrogate-guided search", "Fit observations to select prospective candidates."))],
+    *FOURIER_METHODS,
 ]
 
 
 INTEGER = {"type": "integer", "minimum": 1}
 POSITIVE = {"type": "number", "exclusiveMinimum": 0}
 PROPERTIES = {
+    **FOURIER_PROPERTIES,
     "artifact_inference": {"adapter_id": {"type": "string"}, "parameters": {"type": "object"}},
     "random": {}, "evaluate_asset": {}, "coordinate": {"radius": {**POSITIVE, "maximum": 1, "default": .2}},
     "hillclimb": {"restart_patience": INTEGER, "neighborhood": {"type": "string", "enum": ["permuted", "random"]},
@@ -45,7 +48,7 @@ for method in METHODS:
     properties = dict(TypeAdapter(TrainConfig).json_schema()["properties"]) if name == "dqn" else dict(PROPERTIES[name])
     for key in ("seed", "total_steps"):
         properties.pop(key, None)  # The worker owns these frozen experiment fields.
-    if name not in {"coordinate", "frozen_policy", "evaluate_asset", "artifact_inference"}:
+    if name not in FOURIER_PROPERTIES and name not in {"coordinate", "frozen_policy", "evaluate_asset", "artifact_inference"}:
         properties["initial_design"] = {"type": "array", "description": "A candidate in this instance's declared schema"}
     method.update(contract="optimizer_v1", contract_version=1, batch_size=1, supports_failure_observations=False,
         parameter_schema={"type": "object", "properties": properties, "additionalProperties": False})
@@ -81,6 +84,9 @@ def validate_parameters(name, instance, parameters, training=None, inference_reg
         TrainConfig(**{**(training or {}), **{key: value for key, value in parameters.items() if key != "initial_design"}})
     else:
         check_parameters(parameters, method["parameter_schema"])
+    if name in FOURIER_PROPERTIES:
+        from dqn_meent.flrl_specs import validate
+        validate(name, instance, parameters)
     if name == "artifact_inference":
         from optimization_framework.evaluation.inference import prepare
         prepare(parameters.get("adapter_id"), instance, parameters.get("parameters", {}), registry=inference_registry)
@@ -96,6 +102,8 @@ def capability_reason(name, instance):
     method = next((m for m in METHODS if m["id"] == name), None)
     if method is None:
         return "Missing implementation; commission or reuse a validated version"
+    if method.get("problem_ids") and instance.definition_id not in method["problem_ids"]:
+        return f"{method['name']} requires its declared 2D MEENT problem"
     if instance.candidate_schema.representation not in method["representations"]:
         return f"{method['name']} requires {' or '.join(method['representations'])} candidates"
     if instance.candidate_schema.constraints and not method["constraints"]:
@@ -138,6 +146,9 @@ def create(name, instance, parameters, seed, schedule_steps, training=None, asse
     if reason:
         raise ValueError(reason)
     validate_parameters(name, instance, parameters, training, inference_registry)
+    if name in FOURIER_PROPERTIES:
+        from dqn_meent.flrl_optimizers import FourierOptimizer
+        return FourierOptimizer(name, instance, parameters, seed)
     if name == "artifact_inference":
         from optimization_framework.evaluation.inference import create as create_inference
         return create_inference(instance, parameters, seed, assets or [], artifact_store, inference_registry)

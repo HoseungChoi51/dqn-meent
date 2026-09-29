@@ -7,6 +7,9 @@ import { ManagerIssues } from './implementations';
 import { useCommand } from './commands';
 import { AgentLog } from './agentLog';
 import { DiscoveryPanel } from './discovery';
+import { PiConversation } from './piAgents';
+import { TextContent } from './textContent';
+export { TextContent } from './textContent';
 
 export const researchModes = [
   ['discuss', 'Discuss & redirect'], ['generate', 'Generate strategies'], ['review', 'Critique assumptions'],
@@ -84,17 +87,12 @@ function RequestStatus({ state, request, refresh, resumeDiscovery }: {
   </div>;
 }
 
-export function TextContent({ text }: { text: unknown }) {
-  const content = typeof text === 'string' ? text : text == null ? '' : JSON.stringify(text, null, 2);
-  return <div className="text-content">{content.split('\n').map((line, i) => {
-    const chunks = line.replace(/^#{1,5}\s+/, '').split(/(\*\*[^*]+\*\*)/g).map((part, j) => part.startsWith('**') ? <strong key={j}>{part.slice(2, -2)}</strong> : part);
-    if (/^#{1,5}\s/.test(line)) return <h4 key={i}>{chunks}</h4>;
-    if (/^[-*]\s/.test(line)) return <div className="text-bullet" key={i}><span>•</span><span>{chunks}</span></div>;
-    return <div key={i}>{line ? chunks : <br />}</div>;
-  })}</div>;
+export function ResearchPanel({ state, onClose, refresh, onResearch }: { state: State; onClose: () => void; refresh: () => Promise<void>; onResearch?: (message: string, mode: string) => void }) {
+  if (state.agent_runtime?.configuration?.enabled) return <PiConversation key={state.campaign?.id} state={state} refresh={refresh} onClose={onClose} />;
+  return <LegacyResearchPanel state={state} onClose={onClose} refresh={refresh} onResearch={onResearch} />;
 }
 
-export function ResearchPanel({ state, onClose, refresh, onResearch }: { state: State; onClose: () => void; refresh: () => Promise<void>; onResearch?: (message: string, mode: string) => void }) {
+function LegacyResearchPanel({ state, onClose, refresh, onResearch }: { state: State; onClose: () => void; refresh: () => Promise<void>; onResearch?: (message: string, mode: string) => void }) {
   const command = useCommand(state.campaign);
   const [text, setText] = useState(''), [mode, setMode] = useState('discuss'), [busy, setBusy] = useState(false), [error, setError] = useState('');
   const bottom = useRef<HTMLDivElement>(null);

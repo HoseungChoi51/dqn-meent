@@ -26,8 +26,12 @@ ROOT = Path(__file__).resolve().parents[1]
 SCRIPT = Path(__file__).resolve()
 BOOT = Path("/proc/sys/kernel/random/boot_id").read_text().strip()
 ROLES = ("library", "workspace")
-HEALTH = {"library": "/health", "workspace": "/api/health"}
-SERVICES = {"library": "grating-implementations", "workspace": "grating-lab"}
+HEALTH = {"pi": "/health", "library": "/health", "workspace": "/api/health"}
+SERVICES = {"pi": "grating-pi", "library": "grating-implementations", "workspace": "grating-lab"}
+
+
+def roles(config):
+    return ("pi", *ROLES) if config.get("pi_port") else ROLES
 
 
 class LauncherError(Exception):
@@ -52,6 +56,8 @@ def configuration(path, no_llm=False):
         value = Path(config[key]).expanduser()
         config[key] = str((ROOT / value).resolve())
     ports = [config["workspace_port"], config["implementation_port"]]
+    if config.get("pi_port") is not None:
+        ports.append(config["pi_port"])
     if config.get("tailnet_port") is not None:
         ports.append(config["tailnet_port"])
     if any(type(port) is not int or not 1024 <= port <= 65535 for port in ports) or len(set(ports)) != len(ports):
@@ -69,7 +75,7 @@ def configuration(path, no_llm=False):
 
 
 def port_for(config, role):
-    return config["implementation_port" if role == "library" else "workspace_port"]
+    return config[{"library": "implementation_port", "workspace": "workspace_port", "pi": "pi_port"}[role]]
 
 
 def process_identity(pid):
@@ -177,11 +183,16 @@ def service_environment(config):
     # The token file must identify this library, even if another service's token
     # happens to be present in the calling shell.
     env.pop("GRATING_IMPLEMENTATIONS_TOKEN", None)
+    if config.get("pi_port"):
+        env.update(GRATING_PI_PORT=str(config["pi_port"]), GRATING_PI_URL=f"http://127.0.0.1:{config['pi_port']}",
+            GRATING_PI_WORKSPACE_URL=f"http://127.0.0.1:{config['workspace_port']}",
+            GRATING_PI_DIRECTORY=str(Path(config["directory"]) / "pi"),
+            GRATING_PI_TOKEN_FILE=str(Path(config["directory"]) / "pi/service.token"))
     return env
 
 
 def check_model(config):
-    if not config["llm_enabled"] or config["provider"] != "codex":
+    if config.get("pi_port") or not config["llm_enabled"] or config["provider"] != "codex":
         return
     binary = shutil.which(os.environ.get("GRATING_CODEX_BINARY", "codex"))
     if not binary:
@@ -278,7 +289,7 @@ def fixture_processes(config):
             if len(args) < 4 or (cwd / args[1]).resolve() != ROOT / "scripts/serve_commissioning_fixture.py":
                 continue
             role = args[2]
-            if role not in ROLES:
+            if role not in roles(config):
                 continue
             directory = (cwd / args[args.index("--directory") + 1]).resolve()
             port = int(args[args.index("--port") + 1])
@@ -346,16 +357,27 @@ class Servers:
         if not (frontend / "index.html").is_file() or not (frontend / "assets").is_dir():
             raise LauncherError("Frontend index.html/assets are missing. Build the frontend and set frontend_directory in the config.")
         check_model(self.config)
+        if self.config.get("pi_port"):
+            if not shutil.which("node") or not (ROOT / "agent-harness/dist/server.js").is_file():
+                raise LauncherError("Install Node.js and run npm ci && npm run build in agent-harness first.")
+            import secrets
+            directory = Path(self.config["directory"]) / "pi"
+            directory.mkdir(parents=True, exist_ok=True, mode=0o700)
+            token = directory / "service.token"
+            if not token.exists():
+                with token.open("x") as stream:
+                    stream.write(secrets.token_hex(32) + "\n")
+                token.chmod(0o600)
         tailnet = None
         if self.config.get("tailnet_port"):
             tailnet = Tailnet(self.config["tailnet_port"], f"http://127.0.0.1:{self.config['workspace_port']}")
             # Check collisions before stopping a fixture or starting processes.
             tailnet.route()
         fixtures = fixture_processes(self.config) if replace_fixture else {}
-        for role in ROLES:
+        for role in roles(self.config):
             if role not in living and role not in fixtures and not port_free(port_for(self.config, role)):
                 raise LauncherError(f"Port {port_for(self.config, role)} is already in use. For the old review fixture use start --replace-fixture; other servers must be stopped by their owner.")
-        for role in reversed(ROLES):
+        for role in reversed(roles(self.config)):
             if role in fixtures:
                 print(f"Stopping the old {role} fixture (PID {fixtures[role]['pid']})", flush=True)
                 stop_process(fixtures[role])
@@ -365,7 +387,7 @@ class Servers:
         self.save()
         started = []
         try:
-            for role in ROLES:
+            for role in roles(self.config):
                 if role not in living:
                     started.append(role)
                     self.launch(role)
@@ -402,7 +424,7 @@ class Servers:
                 print("This app's Tailnet route is off.", flush=True)
             except (LauncherError, OSError, subprocess.TimeoutExpired) as error:
                 errors.append(str(error))
-        for role in reversed(ROLES):
+        for role in reversed(roles(self.state.get("config") or self.config)):
             record = self.state["processes"].get(role)
             if not record:
                 continue
@@ -421,7 +443,7 @@ class Servers:
 
     def status(self):
         fixtures = fixture_processes(self.config)
-        for role in ROLES:
+        for role in roles(self.config):
             record = self.state["processes"].get(role)
             if alive(record):
                 label = "healthy" if healthy(self.state["config"], role) else "unhealthy"
@@ -440,6 +462,8 @@ class Servers:
 
 
 def serve(role, config):
+    if role == "pi":
+        os.execvpe("node", ["node", str(ROOT / "agent-harness/dist/server.js")], service_environment(config))
     import uvicorn
     directory = Path(config["directory"])
     if role == "library":
@@ -455,7 +479,7 @@ def serve(role, config):
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("command", choices=("start", "stop", "restart", "status", "logs", "_serve"))
-    parser.add_argument("role", nargs="?", choices=ROLES, help="Optional service name for logs")
+    parser.add_argument("role", nargs="?", choices=("pi", *ROLES), help="Optional service name for logs")
     parser.add_argument("--config", type=Path, default=ROOT / "deploy/review-servers.json")
     parser.add_argument("--no-llm", action="store_true", help="Start with all model calls disabled")
     parser.add_argument("--replace-fixture", action="store_true", help="Replace only matching old review fixture processes")
@@ -472,7 +496,7 @@ def main():
             return 0
         servers = Servers(config)
         if args.command == "logs":
-            paths = [servers.runtime / f"{role}.log" for role in ([args.role] if args.role else ROLES)]
+            paths = [servers.runtime / f"{role}.log" for role in ([args.role] if args.role else roles(config))]
             paths = [path for path in paths if path.exists()]
             if not paths:
                 raise LauncherError("No logs yet; start the services first.")

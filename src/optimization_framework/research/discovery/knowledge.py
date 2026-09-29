@@ -150,6 +150,8 @@ def supplied_passages(value):
 
 
 def validate(controller, session, task, artifact):
+    from .references import validate as validate_references
+    validate_references(controller, session, task, artifact)
     if artifact.kind not in SCHEMAS:
         return artifact.content
     parsed = SCHEMAS[artifact.kind].model_validate(artifact.content)

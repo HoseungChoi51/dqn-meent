@@ -63,6 +63,16 @@ function BindingFields({ label, value, onChange, priced }: {
 }
 
 export function ModelControlPanel({ state, refresh }: { state: State; refresh: () => Promise<void> }) {
+  if (state.agent_runtime?.configuration?.enabled) return <div className="model-control-panel">
+    <h1>Pi session models</h1><p>Pi uses your OpenAI Codex subscription. Each persistent session keeps its assigned model and reasoning effort.</p>
+    <table><thead><tr><th>Agent</th><th>Model</th><th>Reasoning</th><th>Status</th></tr></thead><tbody>
+      {(state.agent_runtime.agents || []).map((agent: any) => <tr key={agent.id}><td>{roleLabel(agent.role)}</td><td>{agent.model}</td><td>{effortLabel(agent.reasoning_effort)}</td><td>{agent.status}</td></tr>)}
+    </tbody></table><p>Open Research notebook to sign in, message the PI, and control its team.</p><a className="button secondary" href="#notebook">Open PI conversation</a>
+  </div>;
+  return <LegacyModelControlPanel state={state} refresh={refresh} />;
+}
+
+function LegacyModelControlPanel({ state, refresh }: { state: State; refresh: () => Promise<void> }) {
   const command = useCommand(state.campaign);
   const [view, setView] = useState<ModelView | null>(null), [draft, setDraft] = useState<Policy | null>(null);
   const [baseRevision, setBaseRevision] = useState(0), [dirty, setDirty] = useState(false);
