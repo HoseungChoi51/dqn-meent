@@ -334,6 +334,7 @@ class PiController:
     def _receive(self, agent_id, remote):
         with self.workspace.lock, self.store.transaction():
             agent = self.store.get(agent_id, "agent_session")
+            previous_agent = deepcopy(agent)
             for event in remote.get("events", []):
                 self.workspace.agent_log.record(agent["campaign_id"], "pi." + event["type"], agent_id=agent_id,
                     role=agent["role"], parent_agent_id=agent.get("parent_agent_id"),
@@ -404,7 +405,8 @@ class PiController:
                 last_run = next((r for r in reversed(self.store.list("agent_run", agent["campaign_id"])) if r["agent_id"] == agent_id), None)
                 if not remaining and last_run and last_run["status"] == "failed":
                     agent.update(status="failed", activity=last_run.get("error") or "Pi turn failed; work is saved. Send a revised direction or resume.")
-            self.store.put("agent_session", agent, "agent.progress")
+            if agent != previous_agent:
+                self.store.put("agent_session", agent, "agent.progress")
 
     def _campaign_events(self, campaign_id):
         config = self.configuration(campaign_id)

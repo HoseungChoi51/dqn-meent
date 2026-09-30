@@ -14,3 +14,5 @@
 .data-table.comparison-diff .comparison-difference>td,.data-table.comparison-diff .comparison-difference>th{background:#fff6df}.data-table.comparison-diff .comparison-difference>th{border-left:3px solid #b68a3c}.data-table.comparison-diff tbody th{font-weight:500}.data-table.comparison-diff tbody th small{color:#718068}
 .comparison-raw{margin:16px 0}.comparison-raw>summary{cursor:pointer;font-size:12px}.comparison-raw pre{white-space:pre-wrap;overflow-wrap:anywhere}
 .comparison-caution{padding:12px;border-left:3px solid #b68a3c;background:#fff6df;font-size:12px;line-height:1.6}
+.comparison-tensorboard{display:block;width:100%;height:min(78vh,850px);min-height:520px;border:1px solid var(--line);border-radius:7px;background:#fff;margin-top:12px}
+.comparison-report-actions{display:flex;align-items:center;gap:12px;margin:18px 0;flex-wrap:wrap}

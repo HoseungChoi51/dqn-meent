@@ -117,17 +117,37 @@ class CampaignMemory:
             if isinstance(value, str):
                 return {value} if value in known_ids else set()
             if isinstance(value, dict):
-                return set().union(*(references(v) for key, v in value.items() if key != "id")) if value else set()
+                result = set()
+                for key, item in value.items():
+                    if key == "id":
+                        continue
+                    # Trial masks are numerical payloads, not record links.
+                    # Inspect the shape only, avoiding millions of scalar
+                    # checks when a 2D design appears in progress and archive.
+                    if key in {"candidate", "best_candidate", "best_design", "design"} and isinstance(item, list) and item:
+                        first = item[0]
+                        if isinstance(first, (int, float, bool)) or (isinstance(first, list) and first
+                                and isinstance(first[0], (int, float, bool))):
+                            continue
+                    result.update(references(item))
+                return result
             if isinstance(value, list):
-                return set().union(*(references(v) for v in value)) if value else set()
+                # Worker progress embeds large numerical masks. A numeric row
+                # cannot contain a record reference and need not be recursed.
+                if value and all(isinstance(item, (int, float, bool)) for item in value):
+                    return set()
+                result = set()
+                for item in value:
+                    result.update(references(item))
+                return result
             return set()
+        edges = [(item["id"], references(item)) for _, item in records]
         changed = True
         while changed:
             changed = False
-            for _, item in records:
-                refs = references(item)
-                if refs & locked and item["id"] not in locked:
-                    locked.add(item["id"])
+            for identity, refs in edges:
+                if identity not in locked and refs & locked:
+                    locked.add(identity)
                     changed = True
         visible = [(kind, item) for kind, item in records if item["id"] not in locked]
         for kind, item in records:
@@ -211,7 +231,7 @@ class CampaignMemory:
                 revision = self.store.get(state["context_id"], "context_revision")
                 if "structured" not in revision:
                     return self.sync(campaign_id, force=True)
-                if not self.store.in_transaction:
+                if not self.store.in_transaction and not (self.workspace.directory / "campaigns" / campaign_id / "manager" / "context.md").exists():
                     self._project(campaign_id, revision, self._records(campaign_id))
                 return revision
             records = self._records(campaign_id)
@@ -267,10 +287,45 @@ class CampaignMemory:
             if kind in {"manager_note", "decision", "manager_issue"}:
                 body = self._text(kind, item)
                 self._atomic_text(notes / f"{item['id']}-{digest(body)[:12]}.md", "```json\n" + body + "\n```\n")
-        with self.store.connection() as db:
-            rows = db.execute("SELECT id,kind,created_at,data FROM events WHERE campaign_id=? AND id<=? ORDER BY id ASC",
-                              (campaign_id, revision["event_cursor"])).fetchall()
-        self._atomic_text(root / "journal.jsonl", "".join(json.dumps({**dict(row), "data": json.loads(row["data"])})+"\n" for row in rows))
+        self._append_journal(root / "journal.jsonl", campaign_id, revision["event_cursor"])
+
+    def _append_journal(self, path: Path, campaign_id: str, through: int):
+        """Project only new committed events; repair a partial trailing line."""
+        with path.open("a+b") as output:
+            output.seek(0, 2)
+            end = output.tell()
+            if end:
+                output.seek(end - 1)
+                if output.read(1) != b"\n":
+                    position = end - 1
+                    while position >= 0:
+                        output.seek(position)
+                        if output.read(1) == b"\n":
+                            break
+                        position -= 1
+                    end = position + 1
+                    output.truncate(end)
+                if end:
+                    position = end - 2
+                    while position >= 0:
+                        output.seek(position)
+                        if output.read(1) == b"\n":
+                            break
+                        position -= 1
+                    output.seek(position + 1)
+                    last = json.loads(output.read(end - position - 2))["id"]
+                else:
+                    last = 0
+            else:
+                last = 0
+            if last > through:
+                raise ValueError("Projected manager journal is ahead of its context revision")
+            output.seek(0, 2)
+            with self.store.connection() as db:
+                rows = db.execute("SELECT id,kind,created_at,data FROM events WHERE campaign_id=? AND id>? AND id<=? ORDER BY id ASC",
+                                  (campaign_id, last, through))
+                for row in rows:
+                    output.write((json.dumps({**dict(row), "data": json.loads(row["data"])}) + "\n").encode())
 
     @staticmethod
     def _atomic_text(path: Path, content):

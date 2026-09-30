@@ -168,7 +168,7 @@ class CampaignManager(research.ResearchCoordinator):
                 except (ValueError, KeyError) as exc:
                     self.store.put("manager_command", {**command, "status": "blocked", "error": str(exc)}, "manager.request_blocked")
                     self.workspace.memory.issue(cid, "manager_request", str(exc), affected=command["id"])
-            for trial in self.store.list("trial", campaign_id):
+            for trial in self.store.list_trials_in_status({"failed", "interrupted"}, campaign_id):
                 if trial["status"] in {"failed", "interrupted"}:
                     self.workspace.memory.issue(trial["campaign_id"], "experiment_failure",
                         trial.get("reason") or "The experiment needs attention.", affected=trial["id"])

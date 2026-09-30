@@ -1,4 +1,4 @@
-import { memo, useEffect, useMemo, useRef, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { api, errorText, objectiveValue, seconds } from './api';
 import type { Json, State } from './api';
 import { useCommand } from './commands';
@@ -40,33 +40,10 @@ function useRead<T>(path: string | null, revision: unknown) {
   }, [path, revision]);
   return { data, error, loading };
 }
-function eventRevision(state: State) { return state.event_cursor ?? Math.max(0, ...state.events.map(e => Number(e.id) || 0)); }
 function cost(value: Json | undefined, axis: string) {
   if (!value || value.total == null) return `Unknown${value?.known ? ` (${axis === 'worker_seconds' ? seconds(value.known) : value.known} measured)` : ''}`;
   return axis === 'worker_seconds' ? seconds(value.total) : value.total.toLocaleString();
 }
-const ObjectivePlot = memo(function ObjectivePlot({ group, axis }: { group: Json; axis: string }) {
-  let xmin = Infinity, xmax = -Infinity, ymin = Infinity, ymax = -Infinity;
-  for (const trial of group.trials) for (const point of trial.curve) {
-    xmin = Math.min(xmin, point.cost); xmax = Math.max(xmax, point.cost);
-    ymin = Math.min(ymin, point.objective); ymax = Math.max(ymax, point.objective);
-  }
-  if (!Number.isFinite(xmin)) return <p className="help-text">No complete cost observations are available for a curve yet.</p>;
-  const x = (value: number) => 65 + (value - xmin) / (xmax - xmin || 1) * 650;
-  const y = (value: number) => 230 - (value - ymin) / (ymax - ymin || 1) * 195;
-  const colors = ['#215e72', '#bb7126', '#7454a1', '#1e8063', '#c05258'];
-  return <svg viewBox="0 0 760 285" role="img" aria-label={`${group.problem.primary_objective.name} by ${axis}`} className="evidence-plot">
-    <path d="M65 25V230H720" fill="none" stroke="#bac6cb" />
-    <text x="60" y="245" textAnchor="middle">{xmin.toPrecision(3)}</text><text x="715" y="245" textAnchor="middle">{xmax.toPrecision(3)}</text>
-    <text x="57" y="234" textAnchor="end">{ymin.toPrecision(3)}</text><text x="57" y="39" textAnchor="end">{ymax.toPrecision(3)}</text>
-    <text x="390" y="274" textAnchor="middle">{axis.replaceAll('_', ' ')}</text>
-    {group.trials.map((trial: Json, i: number) => <g key={trial.id}><polyline fill="none" stroke={colors[i % colors.length]} strokeWidth="2"
-      points={trial.curve.map((point: Json) => `${x(point.cost)},${y(point.objective)}`).join(' ')}><title>{trial.algorithm} · seed {trial.seed}</title></polyline>
-      {trial.curve.slice(-1).map((point: Json) => <circle key={point.cost} cx={x(point.cost)} cy={y(point.objective)} r="4" fill={colors[i % colors.length]}>
-        <title>{trial.algorithm}, seed {trial.seed}: {point.objective} at {point.cost}</title></circle>)}</g>)}
-  </svg>;
-});
-
 function canonical(value: unknown): string {
   if (value === undefined) return 'Not recorded';
   if (Array.isArray(value)) return `[${value.map(canonical).join(', ')}]`;
@@ -178,7 +155,6 @@ function ComparisonGroup({ group, axis, selected, onSelect, finalists, saveFinal
   const decorate = (trial: Json) => ({ ...trial, objective_definition: group.problem.primary_objective, comparison_group_id: group.id });
   return <Panel title={`${group.problem.definition_id} · ${group.problem.primary_objective.direction} ${group.problem.primary_objective.name}`}>
     <p className="help-text">Objective units: {group.problem.primary_objective.units} · matched cost: {group.common_observed_cost == null ? 'No shared observed range' : axis === 'worker_seconds' ? seconds(group.common_observed_cost) : group.common_observed_cost}</p>
-    <ObjectivePlot group={group} axis={axis} />
     <div className="comparison-table-options"><Field label="Results table"><select value={view} onChange={e => setView(e.target.value)}><option value="runs">Individual runs</option><option value="methods">Method groups (seed replicates)</option></select></Field>
       <span className="help-text">Click column headings to sort. Missing values stay last.</span></div>
     <div className="table-scroll"><table className="data-table comparison-results" aria-label={view === 'runs' ? 'Individual run results' : 'Method group results'}><thead><tr>
@@ -219,15 +195,16 @@ function ComparisonGroup({ group, axis, selected, onSelect, finalists, saveFinal
 
 export function GeneralComparison({ state, actions }: Props) {
   const [axis, setAxis] = useState('worker_seconds'), [study, setStudy] = useState('');
+  const [showDetailedReport, setShowDetailedReport] = useState(false), [reportRevision, setReportRevision] = useState(0);
   const [selected, setSelected] = useState<Set<string>>(new Set()), [details, setDetails] = useState<Json[] | null>(null);
   const [failure, setFailure] = useState(''), [busy, setBusy] = useState(false);
   const studyId = study || state.campaign?.active_study_id;
-  const path = state.campaign ? `/api/v1/campaigns/${state.campaign.id}/comparison?cost_axis=${axis}${studyId ? `&study_id=${studyId}` : ''}` : null;
-  const { data: report, error, loading } = useRead<Json>(path, eventRevision(state));
+  const path = showDetailedReport && state.campaign ? `/api/v1/campaigns/${state.campaign.id}/comparison?cost_axis=${axis}${studyId ? `&study_id=${studyId}` : ''}` : null;
+  const { data: report, error, loading } = useRead<Json>(path, reportRevision);
   const saved = (state.finalist_selections || []).find((selection: Json) => selection.study_id === studyId);
   const finalists = useMemo(() => new Set<string>(saved?.trial_ids || []), [saved]);
   const command = useCommand(state.campaign);
-  useEffect(() => { setStudy(''); }, [state.campaign?.id]);
+  useEffect(() => { setStudy(''); setShowDetailedReport(false); }, [state.campaign?.id]);
   useEffect(() => { setSelected(new Set()); setDetails(null); setFailure(''); }, [state.campaign?.id, studyId]);
   const trials: Json[] = useMemo(() => (report?.groups || []).flatMap((group: Json) => group.trials.map((trial: Json) => ({
     ...trial, objective_definition: group.problem.primary_objective, comparison_group_id: group.id }))), [report]);
@@ -245,10 +222,16 @@ export function GeneralComparison({ state, actions }: Props) {
   function select(ids: string[], checked: boolean) { setSelected(previous => {
     const next = new Set(previous); for (const id of ids) if (checked) next.add(id); else next.delete(id); return next;
   }); }
-  return <><div className="page-heading"><div><span className="eyebrow">Evidence comparison</span><h1>Compare at full upstream cost.</h1>
-    <p>Sort observed results, inspect exact method differences, and shortlist finalists for a confirmation study.</p></div></div>
+  return <><div className="page-heading"><div><span className="eyebrow">Evidence comparison</span><h1>Compare results.</h1>
+    <p>Explore optimization curves in TensorBoard, then inspect matched-cost results before shortlisting finalists.</p></div></div>
+    <Panel title="Optimization curves · TensorBoard"><p className="help-text">Select runs from this campaign in TensorBoard’s Runs panel. Curves use direct worker time or solver executions; the detailed report below includes upstream implementation and asset costs.</p>
+      <div className="inline-actions"><a className="button small secondary" href="/tensorboard/" target="_blank" rel="noreferrer">Open TensorBoard in a new tab</a></div>
+      <iframe className="comparison-tensorboard" title="TensorBoard optimization curves" src="/tensorboard/" loading="lazy" /></Panel>
     <div className="form-grid"><Field label="Study"><select value={studyId || ''} onChange={e => setStudy(e.target.value)}>{(state.studies || []).map((s: Json) => <option key={s.id} value={s.id}>{s.goal}</option>)}</select></Field>
       <Field label="Comparison cost"><select value={axis} onChange={e => setAxis(e.target.value)}><option value="worker_seconds">Full upstream worker time</option><option value="evaluation_requests">Full upstream evaluation requests</option><option value="solver_executions">Full upstream solver executions</option></select></Field></div>
+    <div className="inline-actions comparison-report-actions"><button className="button" onClick={() => showDetailedReport ? setReportRevision(n => n + 1) : setShowDetailedReport(true)}>{showDetailedReport ? 'Refresh matched-cost report' : 'Load matched-cost report'}</button>
+      <span className="help-text">The detailed report reads full trial provenance and may take longer for large campaigns.</span></div>
+    {showDetailedReport && <>
     <section className="comparison-shortlist" aria-label="Finalist shortlist"><strong>{finalists.size} finalist runs marked{saved?.prototype_trial_ids ? ` · ${saved.prototype_trial_ids.length} distinct confirmation procedures` : ''}</strong>
       <p>A saved shortlist records your choice for this study. It does not freeze a nomination or schedule experiments. Studies → Define a new study → Fixed confirmation procedure lets you use it.</p>
       <div className="inline-actions"><a className="button" href="#studies">Use finalists in a confirmation study</a>
@@ -270,5 +253,6 @@ export function GeneralComparison({ state, actions }: Props) {
       <p>{cost(report.actual_campaign_costs.quantities.model_calls, 'model_calls')} model calls · implementation service elapsed time: {cost(report.actual_campaign_costs.quantities.implementation_seconds, 'worker_seconds')}.</p>
       <p className="help-text">Shared computations are counted once here. Each dependent method receives its full upstream contribution in the comparison.</p></Panel>}
     {details && <MethodDetailsDialog trials={details} onClose={() => setDetails(null)} />}
+    </>}
   </>;
 }

@@ -46,6 +46,16 @@ def invoke(prepared, name, args=None, call_id='call'):
     return PiTools(workspace.pi).call(agent['id'], run['id'], call_id, name, args or {})
 
 
+def test_repeated_unchanged_pi_inspection_does_not_emit_progress(prepared):
+    workspace, campaign, agent, _ = prepared
+    remote = {'events': [], 'cursor': agent.get('event_cursor', 0), 'runs': {}}
+    workspace.pi._receive(agent['id'], remote)
+    first = sum(row['kind'] == 'agent.progress' for row in workspace.store.events(campaign['id']))
+    workspace.pi._receive(agent['id'], remote)
+    second = sum(row['kind'] == 'agent.progress' for row in workspace.store.events(campaign['id']))
+    assert first == second
+
+
 def test_migration_preserves_allocations_and_uses_subscription_models(prepared):
     w, c, a, r = prepared
     current = w.store.get(c['id'], 'campaign')

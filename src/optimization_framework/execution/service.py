@@ -205,13 +205,11 @@ class Workspace:
 
     def reconcile_assets(self):
         with self.lock:
-            for trial in self.store.list("trial"):
-                if (trial.get("execution_contract") == 1 and trial["status"] not in ACTIVE
-                        and trial.get("attempt", 0) > trial.get("asset_capture_attempt", -1)):
-                    try:
-                        self.capture_evidence(trial)
-                    except Exception as exc:
-                        self.memory.issue(trial["campaign_id"], "evidence_capture_failed", str(exc), affected=trial["id"])
+            for trial in self.store.trials_requiring_capture():
+                try:
+                    self.capture_evidence(trial)
+                except Exception as exc:
+                    self.memory.issue(trial["campaign_id"], "evidence_capture_failed", str(exc), affected=trial["id"])
 
     def create_study(self, campaign_id, request: StudyInput, *, authority="researcher"):
         from optimization_framework.contracts.confirmation import ConfirmationProtocol
@@ -1178,7 +1176,7 @@ class Workspace:
 
     def reconcile(self):
         with self.lock:
-            for trial in self.store.list("trial"):
+            for trial in self.store.list_trials_in_status(LIVE | {"queued", "paused", "interrupted"}):
                 if trial.get("absolute_deadline") and time.time() >= trial["absolute_deadline"] and trial["status"] in {"queued", "paused", "interrupted"}:
                     trial.update(status="budget_exhausted", stopped_by="deadline", reason="Study execution deadline reached",
                         allocation_stop="study_deadline_reached", finished_at=now())
@@ -1317,7 +1315,7 @@ class Workspace:
             try:
                 self.reconcile()
                 with self.lock:
-                    trials = self.store.list("trial")
+                    trials = self.store.list_trials_in_status(LIVE | {"queued"})
                     free = self.max_workers - sum(t["status"] in LIVE for t in trials) - sum(j["status"] in {"starting", "running"} for j in self.store.list("fixed_mask_job"))
                     queued = sorted((t for t in trials if t["status"] == "queued" and self.dependencies_ready(t)), key=lambda t: (-t["priority"], t["created_at"]))
                     for trial in queued:

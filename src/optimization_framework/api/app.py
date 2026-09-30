@@ -4,14 +4,18 @@ from __future__ import annotations
 import argparse
 import asyncio
 from contextlib import asynccontextmanager
+from functools import lru_cache
 import json
 import os
 from pathlib import Path
+import threading
+import time
 from typing import Literal
 
 from fastapi import FastAPI, Query, Request
 from fastapi.responses import FileResponse, JSONResponse, Response, StreamingResponse
 from fastapi.staticfiles import StaticFiles
+from starlette.middleware.gzip import GZipMiddleware
 from pydantic import Field
 from optimization_framework.implementations.models import ImplementationSpec, Package
 
@@ -94,6 +98,8 @@ class ImplementationControl(Model):
 def create_app(directory=None, max_workers=2, start_workers=True, implementation_client=None, frontend_directory=None):
     workspace = Workspace(directory or os.environ.get("GRATING_WORKSPACE", "runs/workspace"), max_workers=max_workers,
                           implementation_client=implementation_client)
+    from optimization_framework.analysis.tensorboard_view import ScalarExporter, tensorboard_app
+    scalar_exporter = ScalarExporter(workspace)
     coordinator = CampaignManager(workspace)
     workspace_id = workspace.store.identity()
 
@@ -101,14 +107,19 @@ def create_app(directory=None, max_workers=2, start_workers=True, implementation
     async def lifespan(app):
         if start_workers:
             workspace.start()
+            scalar_exporter.start()
         yield
         if start_workers:
+            scalar_exporter.stop()
             workspace.close()
 
     app = FastAPI(title="Optimization Lab", version="0.2.0", lifespan=lifespan)
+    app.add_middleware(GZipMiddleware, minimum_size=1024)
     app.state.workspace = workspace
     app.state.coordinator = coordinator
     app.state.manager = coordinator
+    app.state.scalar_exporter = scalar_exporter
+    app.mount("/tensorboard", tensorboard_app(scalar_exporter.directory), name="tensorboard")
     from optimization_framework.api.agent_log import install as install_agent_log
     install_agent_log(app, workspace)
     from optimization_framework.agents.api import install as install_pi
@@ -362,9 +373,24 @@ def create_app(directory=None, max_workers=2, start_workers=True, implementation
         return FileResponse(workspace.assets.artifacts.resolve(reference), filename=operation["bundle_digest"] + ".zip",
                             media_type="application/vnd.optimization.evidence+zip")
 
+    state_read_lock = threading.Lock()
+
     @app.get("/api/v1/state")
     @app.get("/api/state")
     def state(campaign_id: str | None = None):
+        # Several open browser tabs can request the same multi-megabyte state
+        # simultaneously. Coalesce those reads without hiding committed events.
+        with state_read_lock:
+            with workspace.store.connection() as db:
+                if campaign_id:
+                    cursor = db.execute("SELECT COALESCE(MAX(id),0) FROM events WHERE campaign_id=?", (campaign_id,)).fetchone()[0]
+                else:
+                    cursor = db.execute("SELECT COALESCE(MAX(id),0) FROM events").fetchone()[0]
+            # Provider availability can change without an application event.
+            return state_snapshot(campaign_id, cursor, int(time.monotonic() // 30))
+
+    @lru_cache(maxsize=8)
+    def state_snapshot(campaign_id: str | None, cursor: int, refresh_window: int):
         from optimization_framework.research.engine import provider_status
         campaigns = workspace.store.list("campaign")
         campaign = workspace.store.get(campaign_id, "campaign") if campaign_id else (campaigns[-1] if campaigns else None)
@@ -390,7 +416,7 @@ def create_app(directory=None, max_workers=2, start_workers=True, implementation
                 rows = [{**workspace.evaluators.task_view(r), "evaluator_readiness": workspace.evaluators.readiness(r)}
                         for r in rows if not r.get("archived")]
             if kind == "trial":
-                rows = [public_trial(r) for r in rows]
+                rows = [compact_trial(r) for r in rows]
             if kind == "hypothesis":
                 from optimization_framework.research.discovery.proposals import readiness as proposal_readiness
                 rows = [{**h, "implementation_readiness": workspace.implementations.readiness(h),
@@ -425,7 +451,13 @@ def create_app(directory=None, max_workers=2, start_workers=True, implementation
             ("id", "parent_trial_id", "status", "count", "reserved_seconds", "asset_ids", "trial_ids")},
             "unit": grant["schedule"]["unit"]} for grant in workspace.store.list("diagnostic_grant", current)] if current else []
         if campaign:
-            response["manager_context"] = workspace.memory.sync(current)
+            # Polling the UI must not rebuild the manager's full context on
+            # every numerical observation. Commands and manager runs call sync
+            # before using that context; the state view can read its snapshot.
+            memory_state = workspace.memory.state(current)
+            context_id = memory_state.get("context_id")
+            response["manager_context"] = (workspace.store.get(context_id, "context_revision")
+                                           if context_id else workspace.memory.sync(current))
             response["manager_issues"] = [{**issue, "revision": issue.get("revision", issue.get("occurrences", 1))}
                 for issue in workspace.store.list("manager_issue", current)]
             response["manager_commands"] = workspace.store.list("manager_command", current)
@@ -728,6 +760,19 @@ def create_app(directory=None, max_workers=2, start_workers=True, implementation
 
 def public_trial(trial):
     return {k: v for k, v in trial.items() if k not in {"pid", "process_identity"}}
+
+
+def compact_trial(trial):
+    """Keep state polling small; full progress and masks remain in artifacts."""
+    row = public_trial(trial)
+    for field in ("progress", "result"):
+        value = row.get(field)
+        if not isinstance(value, dict):
+            continue
+        row[field] = {key: item for key, item in value.items()
+                      if key not in {"archive", "best_candidate"}
+                      and (field != "result" or key != "best_design" or not row.get("progress"))}
+    return row
 
 
 def export_markdown(workspace, campaign):

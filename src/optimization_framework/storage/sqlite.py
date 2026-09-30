@@ -49,6 +49,7 @@ class Store:
             """)
             db.execute("INSERT OR IGNORE INTO schema_migrations VALUES (1, ?)", (now(),))
             db.execute("CREATE TABLE IF NOT EXISTS cost_positions (source_id TEXT NOT NULL, ordinal INTEGER NOT NULL, cost_event_id TEXT NOT NULL UNIQUE, UNIQUE(source_id, ordinal))")
+            db.execute("CREATE INDEX IF NOT EXISTS records_trial_status ON records(json_extract(data,'$.status'), campaign_id) WHERE kind='trial'")
             if not db.execute("SELECT 1 FROM schema_migrations WHERE version=2").fetchone():
                 for row in db.execute("SELECT data FROM records WHERE kind='cost_event'"):
                     event = json.loads(row[0])
@@ -176,6 +177,31 @@ class Store:
         query += " ORDER BY rowid"
         with self.connection() as db:
             rows = db.execute(query, args).fetchall()
+        return [json.loads(row["data"]) for row in rows]
+
+    def list_trials_in_status(self, statuses, campaign_id: str | None = None) -> list[dict]:
+        statuses = tuple(statuses)
+        if not statuses:
+            return []
+        placeholders = ",".join("?" for _ in statuses)
+        query = f"SELECT data FROM records INDEXED BY records_trial_status WHERE kind='trial' AND json_extract(data,'$.status') IN ({placeholders})"
+        args = list(statuses)
+        if campaign_id is not None:
+            query += " AND campaign_id=?"
+            args.append(campaign_id)
+        query += " ORDER BY rowid"
+        with self.connection() as db:
+            rows = db.execute(query, args).fetchall()
+        return [json.loads(row["data"]) for row in rows]
+
+    def trials_requiring_capture(self) -> list[dict]:
+        query = """SELECT data FROM records WHERE kind='trial'
+                   AND json_extract(data,'$.execution_contract')=1
+                   AND json_extract(data,'$.status') NOT IN ('queued','running','pausing','stopping')
+                   AND COALESCE(json_extract(data,'$.attempt'),0) > COALESCE(json_extract(data,'$.asset_capture_attempt'),-1)
+                   ORDER BY rowid"""
+        with self.connection() as db:
+            rows = db.execute(query).fetchall()
         return [json.loads(row["data"]) for row in rows]
 
     def record_position(self, record_id):
