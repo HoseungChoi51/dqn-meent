@@ -224,7 +224,8 @@ class ImplementationBridge:
                             self.workspace.models.snapshot(campaign_id))
             request = JobRequest(workspace_id=self.workspace_id, campaign_id=campaign_id, hypothesis_id=hypothesis_id,
                 grant_id=identity, idempotency_key=idempotency_key, spec=spec, package=package,
-                compute_seconds=compute_seconds, max_calls=max_calls, api_budget_usd=api_budget_usd,
+                compute_seconds=compute_seconds, max_attempts=1 if accounting_mode == "execution_v1" else 3,
+                max_calls=max_calls, api_budget_usd=api_budget_usd,
                 model_policy=model_policy,
                 agent_parent_id=(grant["request"].get("agent_parent_id") if grant else
                     (self.workspace.pi.configuration(campaign_id) or {}).get("pi_id") if self.workspace.pi.owns(campaign_id) else None),
@@ -342,6 +343,13 @@ class ImplementationBridge:
             if job["status"] in {"failed", "blocked", "interrupted"}:
                 self.workspace.memory.issue(grant["campaign_id"], "implementation_job", job.get("error") or "Revalidation needs attention.",
                     affected=grant["id"], evidence=[job["id"]])
+            return current
+        if job["status"] == "completed" and current["request"].get("accounting_mode") == "execution_v1":
+            # Validation of a sandbox submission publishes evidence, not a
+            # campaign selection. Only an explicit attach promotes its version.
+            self.cache_version(self.client.version(job["version_id"]))
+            current["evidence_reconciled"] = True
+            self.store.put("implementation_grant", current, "implementation.validated_unattached")
             return current
         if job["status"] == "completed" and not current.get("attached"):
             if grant.get("task_id"):

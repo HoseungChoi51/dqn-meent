@@ -286,7 +286,15 @@ def check_invariant(snapshot, case):
     elif case.assertion == "tangent":
         if not case.reference_pointer:
             raise ValueError("Tangency check requires a reference vector pointer")
-        valid = float(np.linalg.norm(value @ select(case.reference_pointer))) <= tolerance
+        reference = select(case.reference_pointer)
+        if case.pointer == "/state/covariance/ambient_U" and value.size == 0:
+            # JSON encodes a true 0-by-d factor as []; NumPy would otherwise
+            # misread it as a length-zero vector and reject valid rank-zero state.
+            # Require the corresponding chart factor to be empty as well.
+            chart_factor = select("/state/covariance/U")
+            valid = value.ndim == 1 and chart_factor.size == 0 and reference.ndim == 1
+        else:
+            valid = float(np.linalg.norm(value @ reference)) <= tolerance
     else:
         if case.maximum_rank is None:
             raise ValueError("Rank check requires maximum_rank")

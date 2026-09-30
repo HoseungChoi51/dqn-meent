@@ -364,7 +364,11 @@ class ImplementationService:
             if attempts and attempts[-1].get("report", {}).get("passed") and attempts[-1].get("review", {}).get("passed"):
                 # Recover a crash between recording a successful attempt and publication.
                 attempts[-1]["finished"] = False
-            while len(attempts) < request.max_attempts or attempts and not attempts[-1].get("finished"):
+            # A submitted development-workspace commit is the only candidate for
+            # this grant. Return failed checks to that persistent coding session;
+            # the short-form builder must not replace the submitted source.
+            attempt_limit = 1 if request.accounting_mode == "execution_v1" else request.max_attempts
+            while len(attempts) < attempt_limit or attempts and not attempts[-1].get("finished"):
                 progress()
                 if not attempts or attempts[-1].get("finished"):
                     attempts.append({"number": len(attempts)+1, "started_at": now()})

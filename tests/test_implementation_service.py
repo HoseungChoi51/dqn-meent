@@ -58,6 +58,21 @@ def test_submitted_package_charges_execution_separately_from_model_wait(tmp_path
     assert 0 < result['compute_seconds'] < elapsed - .8
 
 
+def test_submitted_package_failure_returns_to_coding_workspace_without_rebuild(tmp_path):
+    class NoRebuildAdapter(FakeAdapter):
+        def call(self, role, payload, *, result_type, instructions):
+            assert result_type is not BuildResult, "submitted source must not be replaced by a short-form builder"
+            return super().call(role, payload, result_type=result_type, instructions=instructions)
+
+    service = ImplementationService(tmp_path, adapter_factory=NoRebuildAdapter)
+    invalid = REFERENCE.replace("efficiency > self.score", "True")
+    submitted = request(package=package(invalid).model_dump(), accounting_mode="execution_v1")
+    result = service.run_job(service.submit(submitted)["id"])
+    assert result["status"] == "failed"
+    assert len(result["attempts"]) == 1
+    assert result["attempts"][0]["report"]["passed"] is False
+
+
 def request(**changes):
     return JobRequest.model_validate({"workspace_id": "workspace_one", "campaign_id": "campaign_one", "idempotency_key": "build-one",
         "grant_id": "grant_one", "spec": specification().model_dump(), "compute_seconds": 120, **changes})
@@ -170,11 +185,41 @@ class DirectClient:
     def artifact(self, version_id):
         return self.service.artifact(version_id)
 
+    def version(self, version_id):
+        return self.service.store.get(version_id, "implementation_version")
+
     def versions(self):
         return self.service.store.list("implementation_version")
 
     def control(self, job_id, action):
         return self.service.control(job_id, action)
+
+
+def test_development_validation_does_not_attach_before_selection(tmp_path):
+    from dqn_meent.workspace.service import Workspace
+    from dqn_meent.workspace.models import CampaignInput
+    from optimization_framework.campaigns.hypotheses import create
+    from optimization_framework.contracts.requests import HypothesisInput
+
+    service = ImplementationService(tmp_path / "library", adapter_factory=FakeAdapter)
+    workspace = Workspace(tmp_path / "workspace", implementation_client=DirectClient(service))
+    campaign = workspace.create_campaign(CampaignInput(name="sandbox validation",
+        implementation_compute_budget_seconds=120,
+        tasks=[{"name": "Small device", "physics": {"n_cells": 8, "fourier_order": 2}}]))
+    hypothesis = create(workspace, campaign["id"], HypothesisInput(campaign_id=campaign["id"],
+        title="Candidate", algorithm="fourier", mechanism="Seeded search", rationale="Sandbox submission"),
+        identity="hypothesis_sandbox_candidate")
+    grant = workspace.implementations.commission(hypothesis["id"], specification(), package=package(),
+        compute_seconds=120, idempotency_key="sandbox-submission", accounting_mode="execution_v1")
+    assert grant["request"]["max_attempts"] == 1
+    result = service.run_job(grant["job_id"])
+    assert result["status"] == "completed", result
+    workspace.implementations.reconcile()
+    saved = workspace.store.get(grant["id"], "implementation_grant")
+    assert saved["version_id"] == result["version_id"] and not saved.get("attached")
+    assert workspace.store.get(hypothesis["id"], "hypothesis").get("implementation_version_id") is None
+    workspace.implementations.attach(hypothesis["id"], result["version_id"])
+    assert workspace.store.get(hypothesis["id"], "hypothesis")["implementation_version_id"] == result["version_id"]
 
 
 def test_two_workspaces_reuse_exact_artifact_and_resume_without_service(tmp_path):

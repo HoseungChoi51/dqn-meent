@@ -1,7 +1,10 @@
 # Full Pi implementation workspace
 
-Date: 2026-09-29
-Status: Workspace and campaign integration deployed; H12 pilot active. Independent H12 validation awaits a submitted revision and a new authorized allocation.
+Date: 2026-09-30
+Status: Workspace and campaign integration deployed; H12 pilot active. The
+protected test envelope is frozen. Its first run exposed a rank-zero JSON shape
+bug in the protected invariant checker; the checker has been corrected and the
+same immutable submission is ready for another bounded validation grant.
 
 The browser IDE is available through the existing TailNet route at
 `http://strixhalo.tail096b61.ts.net:8765`. In the campaign's PI panel, select
@@ -18,9 +21,13 @@ an isolated Docker worktree, Pi session, source editor, Git view, and developmen
 terminal. Its host command receipts, questions, checkpoints, source submissions,
 and usage are durable campaign records. The `campaign_submit` tool captures an
 exact commit; no workspace edit can silently alter its submitted package. A
-separate service performs protected validation under a numerical grant. The
-existing 300-second implementation allocation remains fully committed by two
-earlier blocked attempts, so no new validation grant was opened for this pilot.
+separate service performs protected validation under a numerical grant. Two
+earlier blocked attempts committed the original 300-second allocation. The
+researcher authorized another 600 seconds for sandbox correctness work; the
+scientific experiment budget and protected validation reserve were unchanged.
+Validation now tests one exact submitted candidate per grant. A failure returns
+findings to the persistent coding workspace for a new commit, while a passing
+version remains unattached until it is selected for an experiment.
 
 The protected service now exposes H12 diagnostic fixtures for programmatic
 full-mask Fourier decoding at all four modes, actual reconstructed covariance
@@ -41,8 +48,11 @@ actual 2D task configuration, MEENT `(10,5)` fidelity, NumPy 2.5.3 dependency,
 four saved independent behavior checks, 16 inspect-state invariants, and four
 programmatic diagnostics. The PI can refer to this ID without placing the
 16-KiB specification in its model context. The protected runtime and sandbox
-preflight pass; the envelope has not been run against the candidate because no
-new numerical implementation allocation is authorized.
+preflight pass. The first envelope run passed checkpoint continuation but found
+that the checker read a valid empty `ambient_U` factor as a length-zero vector.
+The checker now recognizes that rank-zero factor only when its chart factor is
+also empty. The run stopped before the four bounded MEENT integration calls;
+no protected validation has passed yet.
 
 Use **code-server with the original Pi CLI in a persistent terminal**, connected
 to the campaign through a Pi extension. Provide desktop VS Code over SSH as an

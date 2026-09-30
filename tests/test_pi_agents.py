@@ -216,6 +216,12 @@ def test_large_dimensions_and_frozen_mechanism_checks():
     tangent=MechanismCheck(name='Tangent factor',pointer='/factor',reference_pointer='/direction',assertion='tangent')
     check_invariant({'direction':[1,0],'factor':[[0,1]]},tangent)
     with pytest.raises(ValueError):check_invariant({'direction':[1,0],'factor':[[1,0]]},tangent)
+    rank_zero=MechanismCheck(name='Rank-zero ambient factor',pointer='/state/covariance/ambient_U',
+        reference_pointer='/state/mean',assertion='tangent')
+    empty={'state':{'mean':[1,0],'covariance':{'ambient_U':[],'U':[]}}}
+    check_invariant(empty,rank_zero)
+    with pytest.raises(ValueError,match='invariant failed'):
+        check_invariant({'state':{'mean':[1,0],'covariance':{'ambient_U':[],'U':[[1]]}}},rank_zero)
     psd=MechanismCheck(name='PSD',pointer='/covariance',assertion='positive_semidefinite')
     check_invariant({'covariance':[[1,0],[0,0]]},psd)
     with pytest.raises(ValueError):check_invariant({'covariance':[[1,0],[0,-1]]},psd)
