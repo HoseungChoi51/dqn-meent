@@ -74,3 +74,31 @@ The obsolete, review-rejected H08 draft is not bound to the corrected H09
 implementation. Existing independent conceptual reviews remain separate from
 these implementation checks. Native bindings retain old algorithm settings in
 an immutable `builtin_binding` record rather than creating duplicate proposals.
+
+## Standalone mask library in this campaign
+
+`motif_surgery`, `nested_fourier`, and `phenotype_de` are implemented in the
+separate `mask-optimizers` package at source commit
+`9b38b8cdc81065196dbf7eb03895bc3f34719e4f`. The campaign adapter
+converts its x-major masks to the MEENT evaluator's y-major candidate order,
+then returns measured hard-mask utility through the library's ask/observe
+contract. No simulator code is copied into the numerical library. The adapter
+requires version `0.1.0`; if that version is absent, method readiness reports
+the missing installation rather than treating a proposal as runnable.
+
+On this host the wheel is at
+`../mask-optimizers/dist/mask_optimizers-0.1.0-py3-none-any.whl` with SHA-256
+`7ed1812b8dbecf005ccf395cd675f7e5bf05cb0b517c1b03613ccd9edb04691c`.
+Install it into the application environment with:
+
+```bash
+uv pip install --python .venv/bin/python ../mask-optimizers/dist/mask_optimizers-0.1.0-py3-none-any.whl
+```
+
+`tests/test_mask_library_campaign.py` checks the boundary's mask order,
+y-reflection, exact checkpoint continuation, 256×128 construction, one
+direct MEENT evaluation and a three-step checkpointing campaign worker run
+per method. These checks establish campaign execution compatibility, not
+search effectiveness. H12 remains on its separate protected
+implementation-service review path; the standalone library's H12 numerical
+port is not substituted for that campaign verdict.

@@ -6,6 +6,8 @@ from .config import TrainConfig
 from pydantic import TypeAdapter
 from dqn_meent.flrl_specs import METHODS as FOURIER_METHODS, PROPERTIES as FOURIER_PROPERTIES
 
+MASK_LIBRARY_METHODS = {"motif_surgery", "nested_fourier", "phenotype_de"}
+
 
 METHODS = [
     {"id": "random", "name": "Uniform random", "description": "Independent feasible samples; reference baseline.", "representations": ["binary", "discrete", "continuous"], "constraints": True, "parameters": {}},
@@ -24,6 +26,12 @@ METHODS = [
         ("population", "Population search", "Recombination and mutation of a binary population."),
         ("surrogate", "Surrogate-guided search", "Fit observations to select prospective candidates."))],
     *FOURIER_METHODS,
+    *[{"id": name, "name": title, "description": "Standalone mask-optimizers method on the 2D MEENT grid.",
+       "problem_ids": ["meent_2d_dual_polarization_deflector"], "representations": ["binary"],
+       "constraints": False, "parameters": {}} for name, title in (
+        ("motif_surgery", "Mirror-paired motif surgery"),
+        ("nested_fourier", "Nested Fourier-band continuation"),
+        ("phenotype_de", "Phenotype-archive differential evolution"))],
 ]
 
 
@@ -42,13 +50,19 @@ PROPERTIES = {
     "block_tabu": {"max_block_size": INTEGER, "restart_patience": INTEGER, "tabu_tenure": INTEGER},
     "population": {"population_size": {"type": "integer", "minimum": 2}, "mutation_rate": {**POSITIVE, "maximum": 1}},
     "surrogate": {"warmup": INTEGER, "candidate_pool": INTEGER, "ridge": POSITIVE, "exploration": POSITIVE, "max_samples": INTEGER},
+    "motif_surgery": {"radius": INTEGER, "initial_count": INTEGER},
+    "nested_fourier": {"stage_patience": INTEGER},
+    "phenotype_de": {"population_size": {"type": "integer", "minimum": 4}, "bins": {"type": "integer", "minimum": 2},
+        "differential_weight": {**POSITIVE, "maximum": 2},
+        "crossover_rate": {**POSITIVE, "maximum": 1},
+        "modes_x": INTEGER, "modes_y": {"type": "integer", "minimum": 0}},
 }
 for method in METHODS:
     name = method["id"]
     properties = dict(TypeAdapter(TrainConfig).json_schema()["properties"]) if name == "dqn" else dict(PROPERTIES[name])
     for key in ("seed", "total_steps"):
         properties.pop(key, None)  # The worker owns these frozen experiment fields.
-    if name not in FOURIER_PROPERTIES and name not in {"coordinate", "frozen_policy", "evaluate_asset", "artifact_inference"}:
+    if name not in FOURIER_PROPERTIES and name not in MASK_LIBRARY_METHODS | {"coordinate", "frozen_policy", "evaluate_asset", "artifact_inference"}:
         properties["initial_design"] = {"type": "array", "description": "A candidate in this instance's declared schema"}
     method.update(contract="optimizer_v1", contract_version=1, batch_size=1, supports_failure_observations=False,
         parameter_schema={"type": "object", "properties": properties, "additionalProperties": False})
@@ -87,6 +101,8 @@ def validate_parameters(name, instance, parameters, training=None, inference_reg
     if name in FOURIER_PROPERTIES:
         from dqn_meent.flrl_specs import validate
         validate(name, instance, parameters)
+    if name in MASK_LIBRARY_METHODS and (parameters.get("modes_x", 8) > 16 or parameters.get("modes_y", 4) > 8):
+        raise ValueError("Mask-library Fourier modes exceed the supported basis")
     if name == "artifact_inference":
         from optimization_framework.evaluation.inference import prepare
         prepare(parameters.get("adapter_id"), instance, parameters.get("parameters", {}), registry=inference_registry)
@@ -102,6 +118,10 @@ def capability_reason(name, instance):
     method = next((m for m in METHODS if m["id"] == name), None)
     if method is None:
         return "Missing implementation; commission or reuse a validated version"
+    if name in MASK_LIBRARY_METHODS:
+        from dqn_meent.mask_library_adapter import library_available, LIBRARY_VERSION
+        if not library_available():
+            return f"Install mask-optimizers {LIBRARY_VERSION} before using this campaign method"
     if method.get("problem_ids") and instance.definition_id not in method["problem_ids"]:
         return f"{method['name']} requires its declared 2D MEENT problem"
     if instance.candidate_schema.representation not in method["representations"]:
@@ -149,6 +169,9 @@ def create(name, instance, parameters, seed, schedule_steps, training=None, asse
     if name in FOURIER_PROPERTIES:
         from dqn_meent.flrl_optimizers import FourierOptimizer
         return FourierOptimizer(name, instance, parameters, seed)
+    if name in MASK_LIBRARY_METHODS:
+        from dqn_meent.mask_library_adapter import MaskLibraryAdapter
+        return MaskLibraryAdapter(name, instance, parameters, seed)
     if name == "artifact_inference":
         from optimization_framework.evaluation.inference import create as create_inference
         return create_inference(instance, parameters, seed, assets or [], artifact_store, inference_registry)

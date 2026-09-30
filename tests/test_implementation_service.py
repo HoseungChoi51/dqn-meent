@@ -9,9 +9,32 @@ from dqn_meent.implementations.api import create_app
 from dqn_meent.implementations.models import BuildResult, ImplementationSpec, JobRequest, Package, ReviewResult
 from dqn_meent.implementations.runtime import PackageOptimizer, prepare_runtime, write_package
 from dqn_meent.implementations.service import ImplementationService
+from optimization_framework.agents.implementation import review_context
+from optimization_framework.contracts.base import content_hash
 
 
 REFERENCE = (Path(__file__).resolve().parents[1] / "examples/implementation-reference/optimizer.py").read_text()
+
+
+def test_pi_review_report_compacts_full_masks_without_losing_check_results():
+    mask = [index % 2 for index in range(256 * 128)]
+    report = {"id": "validation_one", "passed": True, "checks": [
+        {"name": "full-mask fixture", "passed": True,
+         "detail": {"designs": [mask, mask[::-1]], "efficiencies": [.2, .3]}},
+        {"name": "covariance cap", "passed": True,
+         "detail": {"unshrunk_max": 5.475, "post_shrink_max": 4.0}}]}
+    context = {"spec": {"acceptance_criteria": ["cover all criteria"]},
+               "package": {"files": [{"path": "optimizer.py", "content": REFERENCE}]},
+               "report": report}
+    bounded = review_context(context)
+    assert len(json.dumps(bounded)) < 100_000
+    assert bounded["report"]["full_report_digest"] == content_hash(report)
+    assert bounded["report"]["checks"][0]["detail"]["designs"][0] == {
+        "array_digest": content_hash(mask), "length": len(mask), "minimum": 0,
+        "maximum": 1, "sum": len(mask) // 2}
+    assert bounded["report"]["checks"][1] == report["checks"][1]
+    assert bounded["package"] == context["package"]
+    assert report["checks"][0]["detail"]["designs"][0] == mask
 
 
 def specification(**changes):
@@ -71,6 +94,30 @@ def test_submitted_package_failure_returns_to_coding_workspace_without_rebuild(t
     assert result["status"] == "failed"
     assert len(result["attempts"]) == 1
     assert result["attempts"][0]["report"]["passed"] is False
+
+
+def test_pre_review_transport_failure_resumes_same_protected_report(tmp_path):
+    class LostReviewAdapter(FakeAdapter):
+        first = True
+
+        def call(self, role, payload, *, result_type, instructions):
+            if role == "implementation_validator" and self.first:
+                type(self).first = False
+                raise ValueError("Review transport was unavailable")
+            return super().call(role, payload, result_type=result_type, instructions=instructions)
+
+    service = ImplementationService(tmp_path, adapter_factory=LostReviewAdapter)
+    job = service.submit(request(package=package().model_dump(), accounting_mode="execution_v1"))
+    failed = service.run_job(job["id"])
+    assert failed["status"] == "failed"
+    assert failed["attempts"][0]["report"]["passed"] is True
+    report_id = failed["attempts"][0]["report"]["id"]
+    assert not failed["attempts"][0].get("review")
+    service.control(job["id"], "resume")
+    completed = service.run_job(job["id"])
+    assert completed["status"] == "completed"
+    assert len(completed["attempts"]) == 1
+    assert completed["attempts"][0]["report"]["id"] == report_id
 
 
 def request(**changes):

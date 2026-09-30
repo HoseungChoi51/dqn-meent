@@ -71,6 +71,9 @@ export function PiAgentPanel({ state, refresh, connectionError }: { state: State
     <details open><summary>Agent team · {agents.length} sessions</summary>
       <div className="pi-agent-tree">{agents.map(agent => <article key={agent.id} className={agent.parent_agent_id ? 'pi-child' : ''}>
         <div><strong>{agent.role.replaceAll('_', ' ')}</strong> <Badge>{agent.status}</Badge></div>
+        {agent.role === 'implementation_builder' && agent.status === 'stopped' &&
+          runtime.development?.workspaces?.some((workspace: Json) => workspace.submissions?.length > 0) &&
+          <p className="help-text">Earlier builder session. Its submitted source and review remain in the implementation workspace.</p>}
         {agent.role !== 'pi' && <p>{agent.objective.length > 300 ? agent.objective.slice(0, 300) + '…' : agent.objective}</p>}<small>{agent.model} · {agent.reasoning_effort}{agent.parent_agent_id ? ' · reports to PI' : ''}</small>
         <details><summary>Assignment, activity and references</summary><TextContent text={agent.objective} /><TextContent text={agent.activity || 'Waiting for the next recorded event.'} />
           <a href={`/api/campaigns/${state.campaign!.id}/agents/records/${agent.id}`} target="_blank" rel="noreferrer">Inspect saved agent record</a>

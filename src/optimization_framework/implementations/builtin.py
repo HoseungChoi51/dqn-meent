@@ -40,6 +40,7 @@ def bind(workspace, campaign_id, payload, command_id):
         'previous_algorithm': hypothesis['algorithm'], 'previous_parameters': hypothesis.get('algorithm_config', {}),
         'reason': values.reason, 'created_at': now(), 'validation_level': 'bundled_regression'}
     workspace.store.put_immutable('builtin_binding', record, 'implementation.builtin_bound')
-    hypothesis.update(algorithm=values.algorithm, algorithm_config=values.parameters, builtin_binding_id=record['id'])
+    hypothesis.update(algorithm=values.algorithm, algorithm_config=values.parameters,
+                      builtin_binding_id=record['id'], executable=True, implementation_status='builtin')
     workspace.store.put('hypothesis', hypothesis, 'hypothesis.implementation_bound')
     return {'binding_id': record['id'], 'hypothesis_id': hypothesis['id'], 'algorithm': values.algorithm}

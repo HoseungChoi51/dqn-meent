@@ -233,8 +233,19 @@ class ImplementationService:
                     raise ValueError("Job has no uncertain provider call")
                 return self.update_job(job_id, status="closed_uncertain", finished_at=now(), accounting_final=True)
             if action == "resume":
-                if job["status"] not in {"interrupted", "blocked"} or job.get("usage", {}).get("pending_reservation"):
-                    raise ValueError("Only interrupted or blocked jobs without uncertain calls can resume")
+                # A transport failure after protected checks can be repaired
+                # without repeating numerical work or commissioning a new grant.
+                # Keep other failed jobs terminal: they may contain a genuine
+                # implementation or validation failure.
+                review_only_failure = (job["status"] == "failed"
+                    and job["request"].get("accounting_mode") == "execution_v1"
+                    and bool(job.get("attempts"))
+                    and job["attempts"][-1].get("report", {}).get("passed") is True
+                    and not job["attempts"][-1].get("review")
+                    and not job["attempts"][-1].get("finished"))
+                if (job["status"] not in {"interrupted", "blocked"} and not review_only_failure
+                        or job.get("usage", {}).get("pending_reservation")):
+                    raise ValueError("Only interrupted, blocked, or pre-review transport-failed jobs without uncertain calls can resume")
                 if job["compute_seconds"] >= job["request"]["compute_seconds"]:
                     raise ValueError("The job's fixed compute grant is exhausted; commission a new bounded job")
                 return self.update_job(job_id, status="queued", error=None, cancel_requested=False, accounting_final=False)

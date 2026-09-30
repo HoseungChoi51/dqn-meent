@@ -1,13 +1,28 @@
 """Authority, durable recovery and evidence isolation for the Pi replacement."""
 from concurrent.futures import ThreadPoolExecutor
 import json
+from types import SimpleNamespace
 import pytest
 
+from optimization_framework.agents.api import active_implementation_grant
 from optimization_framework.agents.tools import PiTools
 from optimization_framework.contracts.requests import CampaignInput, TaskInput
 from optimization_framework.contracts.commands import Command
 from optimization_framework.execution.service import Workspace
 from optimization_framework.storage.sqlite import now
+
+
+def test_resumed_library_job_can_dispatch_review_before_grant_projection():
+    grant = {'id': 'grant_one', 'campaign_id': 'campaign_one', 'job_id': 'job_one',
+             'status': 'failed', 'request': {'agent_parent_id': 'pi_one'}}
+    job = {'status': 'reviewing', 'request': {'grant_id': 'grant_one', 'campaign_id': 'campaign_one',
+           'workspace_id': 'workspace_one', 'agent_parent_id': 'pi_one'}}
+    client = SimpleNamespace(job=lambda identity: job)
+    workspace = SimpleNamespace(implementations=SimpleNamespace(client=client, workspace_id='workspace_one'))
+    assert active_implementation_grant(workspace, grant, 'pi_one')
+    assert not active_implementation_grant(workspace, grant, 'pi_other')
+    job['status'] = 'failed'
+    assert not active_implementation_grant(workspace, grant, 'pi_one')
 
 
 @pytest.fixture

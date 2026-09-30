@@ -29,6 +29,24 @@ class ImplementationAssignment(BaseModel):
     deadline_at: float
 
 
+def active_implementation_grant(workspace, grant, pi_id):
+    if grant["request"].get("agent_parent_id") != pi_id:
+        return False
+    if grant["status"] not in {"completed", "failed", "cancelled", "closed_uncertain"}:
+        return True
+    # The library can start a resumed job before its queued state is projected
+    # into this workspace. Verify its current ownership and status directly.
+    if not grant.get("job_id"):
+        return False
+    job = workspace.implementations.client.job(grant["job_id"])
+    request = job.get("request", {})
+    return (job.get("status") in {"queued", "building", "validating", "reviewing", "repairing"}
+        and request.get("grant_id") == grant["id"]
+        and request.get("workspace_id") == workspace.implementations.workspace_id
+        and request.get("campaign_id") == grant["campaign_id"]
+        and request.get("agent_parent_id") == pi_id)
+
+
 def install(app, workspace):
     gateway = PiTools(workspace.pi)
 
@@ -78,7 +96,7 @@ def install(app, workspace):
             raise ValueError("The campaign PI is not active")
         if body["deadline_at"] <= time.time():
             raise ValueError("Implementation allocation has expired")
-        if grant["request"].get("agent_parent_id") != config["pi_id"] or grant["status"] in {"completed", "failed", "cancelled", "closed_uncertain"}:
+        if not active_implementation_grant(workspace, grant, config["pi_id"]):
             raise ValueError("Implementation assignment is outside the active PI grant")
         frozen_spec = grant["request"]["spec"]
         if body["context"].get("spec", {}).get("mechanism") != frozen_spec.get("mechanism"):
